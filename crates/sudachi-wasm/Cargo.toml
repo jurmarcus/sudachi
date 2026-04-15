@@ -1,0 +1,21 @@
+[package]
+name = "sudachi-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Sudachi Japanese tokenizer for WebAssembly (browser and Node.js)"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+sudachi-search.workspace = true
+sudachi.workspace = true
+wasm-bindgen = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"

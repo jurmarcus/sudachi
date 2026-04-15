@@ -8,20 +8,29 @@ Japanese morphological analysis ecosystem — Sudachi tokenizers for SQLite, Pos
 crates/
 ├── sudachi-search/    # Core: B+C multi-granularity tokenization (search-engine agnostic)
 ├── sudachi-sqlite/    # Adapter: SearchToken → SQLite FTS5 colocated tokens (cdylib)
-└── sudachi-tantivy/   # Adapter: SearchToken → Tantivy (used by jurmarcus/paradedb)
+├── sudachi-tantivy/   # Adapter: SearchToken → Tantivy (used by jurmarcus/paradedb)
+└── sudachi-wasm/      # Adapter: SearchToken → WebAssembly via wasm-bindgen
 
-wasm/                  # WASM: sudachi.rs compiled for browser/Node.js (wasm-pack, own workspace)
+wasm/                  # Legacy: standalone wasm reimplementation (third-party, may be removed)
 docker/
 └── postgres/          # Docker infrastructure for ParadeDB + Sudachi (no Rust source here)
 ```
 
 ## Workspace
 
-Root workspace members: `crates/sudachi-search`, `crates/sudachi-sqlite`, `crates/sudachi-tantivy`.
+Root workspace members: `sudachi-search`, `sudachi-sqlite`, `sudachi-tantivy`, `sudachi-wasm`.
 
-Separate build targets (not workspace members):
-- `wasm/` — wasm-pack build; run via `just wasm build`
+Separate build targets:
 - `docker/postgres/` — Docker infra; Rust pgrx extension lives in `~/CODE/paradedb`
+
+## WASM Patch
+
+The upstream `sudachi` crate doesn't compile for `wasm32-unknown-unknown` due to `libloading`
+(DSO plugin loading). We apply a patch from `jurmarcus/sudachi.rs` that gates the plugin loader
+behind `#[cfg(not(target_family = "wasm"))]`. See `[patch]` in root `Cargo.toml`.
+
+When https://github.com/WorksApplications/sudachi.rs/pull/313 merges upstream, remove the
+`[patch]` block and update the `sudachi` workspace dep back to the upstream URL.
 
 ## ParadeDB Integration
 
@@ -41,8 +50,8 @@ just test         # Run workspace tests
 just fix          # Format + lint
 just ci           # Full CI: fmt check + clippy + tests
 
-just wasm build       # Build WASM (wasm-pack, browser ES module) — runs from wasm/
-just wasm dict-setup  # Install WASM dict resources into wasm/resources/
+just wasm-build       # Build WASM for browser (ES module) from crates/sudachi-wasm
+just wasm-build-node  # Build WASM for Node.js
 
 just dict-setup   # Install Sudachi dictionary to ~/.sudachi/
 just dict-path    # Show resolved dictionary path

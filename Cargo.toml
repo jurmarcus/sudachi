@@ -4,6 +4,7 @@ members = [
     "crates/sudachi-search",
     "crates/sudachi-sqlite",
     "crates/sudachi-tantivy",
+    "crates/sudachi-wasm",
 ]
 # Note: wasm/ and docker/postgres/ are separate build targets (wasm-pack, Docker),
 # not Cargo workspace members.
@@ -15,9 +16,13 @@ license = "MIT"
 repository = "https://github.com/jurmarcus/sudachi"
 rust-version = "1.85"
 
+[patch."https://github.com/WorksApplications/sudachi.rs"]
+# Applies PR #313 (wasm32 compat: gate libloading behind cfg(not(wasm))).
+# Drop this patch when https://github.com/WorksApplications/sudachi.rs/pull/313 merges.
+sudachi = { git = "https://github.com/jurmarcus/sudachi.rs", rev = "a7c50e44c98b44528742d65629f9b59e095a2bdd" }
+
 [workspace.dependencies]
-# Upstream sudachi.rs — pinned to a known-good commit for reproducible builds.
-# To update: run `cargo update -p sudachi` and commit the new Cargo.lock.
+# Upstream sudachi.rs — pinned rev, patched via jurmarcus/sudachi.rs for wasm32 compat.
 sudachi = { git = "https://github.com/WorksApplications/sudachi.rs", rev = "b568decbbd4ea209dec847821dc1f5069a0f2ff5" }
 sudachi-search = { path = "crates/sudachi-search" }
 libc = { version = "0.2", default-features = false }

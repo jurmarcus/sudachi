@@ -12,7 +12,7 @@ default:
 
 # Build for browser (ES module)
 build:
-    wasm-pack build --release --target web .
+    wasm-pack build --release --target web ../crates/sudachi-wasm
 
 # Build for Node.js
 build-node:

@@ -2,18 +2,31 @@
 # https://github.com/jurmarcus/sudachi
 #
 # Workspace crates (crates/*) use plain cargo.
-# Separate build targets have their own justfiles:
-#   wasm/          — wasm-pack build (just wasm <recipe>)
-#   docker/postgres/ — Docker (use pgrx-* recipes below for paradedb)
+# wasm-pack targets: use wasm-build* recipes below.
+# docker/postgres/ — Docker (use pgrx-* recipes below for paradedb)
 
 default:
     @just --list
 
 # ============================================================================
-# Wasm module (wasm-pack, excluded from workspace)
+# WASM (crates/sudachi-wasm — thin sudachi-search wrapper)
 # ============================================================================
 
-mod wasm 'wasm'
+# Build WASM for browser (ES module)
+wasm-build:
+    wasm-pack build --release --target web crates/sudachi-wasm
+
+# Build WASM for Node.js
+wasm-build-node:
+    wasm-pack build --release --target nodejs crates/sudachi-wasm
+
+# Build WASM for bundler (webpack, vite, etc.)
+wasm-build-bundler:
+    wasm-pack build --release --target bundler crates/sudachi-wasm
+
+# Dev build (faster, unoptimized)
+wasm-build-dev:
+    wasm-pack build --dev --target web crates/sudachi-wasm
 
 # ============================================================================
 # Workspace builds
@@ -126,4 +139,4 @@ env:
 # Clean all build artifacts
 clean:
     cargo clean
-    rm -rf wasm/pkg/
+    rm -rf crates/sudachi-wasm/pkg/
