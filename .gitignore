@@ -1,5 +1,5 @@
-/target
-/crates/sudachi-wasm/pkg
+target/
+/crates/sudachi-wasm/wasm/pkg
 *.dic
 .DS_Store
 .env

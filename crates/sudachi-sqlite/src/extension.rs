@@ -161,11 +161,11 @@ impl<'api> PreparedStatement<'api> {
 
 impl Drop for PreparedStatement<'_> {
     fn drop(&mut self) {
-        if !self.finalized && !self.stmt.is_null() {
-            if let Some(finalize) = self.api.raw.finalize {
-                unsafe {
-                    finalize(self.stmt);
-                }
+        if !self.finalized && !self.stmt.is_null()
+            && let Some(finalize) = self.api.raw.finalize
+        {
+            unsafe {
+                finalize(self.stmt);
             }
         }
     }
@@ -272,10 +272,10 @@ fn parse_tokenizer_args(az_arg: *const *const c_uchar, n_arg: c_int) -> bool {
 
         // Convert C string to Rust &str
         let c_str = unsafe { std::ffi::CStr::from_ptr(arg_ptr as *const c_char) };
-        if let Ok(arg) = c_str.to_str() {
-            if arg.eq_ignore_ascii_case("surface") {
-                return true;
-            }
+        if let Ok(arg) = c_str.to_str()
+            && arg.eq_ignore_ascii_case("surface")
+        {
+            return true;
         }
     }
 

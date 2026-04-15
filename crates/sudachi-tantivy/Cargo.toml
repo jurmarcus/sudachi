@@ -2,11 +2,16 @@
 name = "sudachi-tantivy"
 version = "0.1.0"
 edition = "2024"
-license = "MIT"
+license = "Apache-2.0"
+description = "Sudachi tokenizer for Tantivy full-text search"
 repository = "https://github.com/jurmarcus/sudachi"
-description = "Tantivy tokenizer adapter for sudachi-search (B+C multi-granularity)"
-# Not published yet — implementation pending
+keywords = ["japanese", "tokenizer", "tantivy", "nlp", "morphological-analysis"]
+categories = ["text-processing", "internationalization"]
 publish = false
 
 [dependencies]
+tantivy-tokenizer-api = "0.6.0"
+tantivy = "0.25.0"
+# Pin to the same rev as workspace to avoid Cargo resolving two sudachi versions
+sudachi = { git = "https://github.com/WorksApplications/sudachi.rs", rev = "b568decbbd4ea209dec847821dc1f5069a0f2ff5" }
 sudachi-search = { path = "../sudachi-search" }

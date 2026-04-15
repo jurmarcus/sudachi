@@ -1,8 +1,28 @@
-// sudachi-tantivy: Tantivy tokenizer adapter for sudachi-search
-//
-// Translates SearchToken from sudachi-search into Tantivy's token stream:
-//   is_colocated: false  → position_increment = 1  (new position)
-//   is_colocated: true   → position_increment = 0  (same position, colocated)
-//
-// TODO: Implement tantivy::tokenizer::Tokenizer trait
-// See: https://docs.rs/tantivy/latest/tantivy/tokenizer/index.html
+//! # sudachi-tantivy
+//!
+//! A [Sudachi](https://github.com/WorksApplications/sudachi.rs) tokenizer implementation
+//! for [Tantivy](https://github.com/quickwit-oss/tantivy) full-text search.
+//!
+//! Sudachi provides superior Japanese morphological analysis with:
+//! - Three split modes (A, B, C) for different granularity
+//! - Normalized forms for better matching
+//! - High-quality readings (furigana)
+//!
+//! ## Example
+//!
+//! ```rust,ignore
+//! use sudachi_tantivy::{SudachiTokenizer, SplitMode};
+//! use tantivy::Index;
+//!
+//! // Create tokenizer with mode C (longest units)
+//! let tokenizer = SudachiTokenizer::new(SplitMode::C)?;
+//!
+//! // Register with Tantivy
+//! index.tokenizers().register("lang_ja", tokenizer);
+//! ```
+
+pub mod stream;
+pub mod tokenizer;
+
+pub use stream::SudachiTokenStream;
+pub use tokenizer::{SudachiError, SudachiTokenizer, SplitMode, TokenData};
