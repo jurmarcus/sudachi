@@ -11,8 +11,8 @@ use sudachi_search::SearchTokenizer;
 
 /// Helper to load the dictionary from SUDACHI_DICT_PATH
 fn load_tokenizer() -> SearchTokenizer {
-    let dict_path =
-        std::env::var("SUDACHI_DICT_PATH").expect("SUDACHI_DICT_PATH must be set for integration tests");
+    let dict_path = std::env::var("SUDACHI_DICT_PATH")
+        .expect("SUDACHI_DICT_PATH must be set for integration tests");
     let dict_bytes = std::fs::read(&dict_path).expect("Failed to read dictionary file");
     let storage = SudachiDicData::new(Storage::Owned(dict_bytes));
     let config = Config::minimal_at(std::path::Path::new(&dict_path).parent().unwrap());
@@ -70,7 +70,10 @@ fn test_filter_past_tense_ta() {
 
     // With filtering (default), should only get 食べる
     let surfaces: Vec<_> = tokens.iter().map(|t| t.surface.as_str()).collect();
-    assert!(surfaces.contains(&"食べる"), "Should include normalized 食べる");
+    assert!(
+        surfaces.contains(&"食べる"),
+        "Should include normalized 食べる"
+    );
     assert!(!surfaces.contains(&"た"), "Should filter out た");
 }
 
@@ -82,9 +85,15 @@ fn test_filter_progressive_teiru() {
 
     // With filtering, should only get 食べる (て, いる filtered)
     let surfaces: Vec<_> = tokens.iter().map(|t| t.surface.as_str()).collect();
-    assert!(surfaces.contains(&"食べる"), "Should include normalized 食べる");
+    assert!(
+        surfaces.contains(&"食べる"),
+        "Should include normalized 食べる"
+    );
     assert!(!surfaces.contains(&"て"), "Should filter out て");
-    assert!(!surfaces.contains(&"いる"), "Should filter out いる (non-independent)");
+    assert!(
+        !surfaces.contains(&"いる"),
+        "Should filter out いる (non-independent)"
+    );
 }
 
 #[test]
@@ -95,7 +104,10 @@ fn test_filter_adjective_past() {
 
     // With filtering, should get 美しい (た filtered)
     let surfaces: Vec<_> = tokens.iter().map(|t| t.surface.as_str()).collect();
-    assert!(surfaces.contains(&"美しい"), "Should include normalized 美しい");
+    assert!(
+        surfaces.contains(&"美しい"),
+        "Should include normalized 美しい"
+    );
     assert!(!surfaces.contains(&"た"), "Should filter out た");
 }
 
@@ -107,7 +119,10 @@ fn test_filter_polite_masu() {
 
     // With filtering, should get 食べる (ます filtered)
     let surfaces: Vec<_> = tokens.iter().map(|t| t.surface.as_str()).collect();
-    assert!(surfaces.contains(&"食べる"), "Should include normalized 食べる");
+    assert!(
+        surfaces.contains(&"食べる"),
+        "Should include normalized 食べる"
+    );
     assert!(!surfaces.contains(&"ます"), "Should filter out ます");
 }
 
@@ -135,7 +150,10 @@ fn test_with_all_tokens_preserves_ta() {
     // With all tokens, should include both 食べる and た
     let surfaces: Vec<_> = tokens.iter().map(|t| t.surface.as_str()).collect();
     assert!(surfaces.contains(&"食べる"), "Should include 食べる");
-    assert!(surfaces.contains(&"た"), "Should include た with all_tokens");
+    assert!(
+        surfaces.contains(&"た"),
+        "Should include た with all_tokens"
+    );
 }
 
 #[test]
@@ -147,9 +165,15 @@ fn test_with_all_tokens_preserves_teiru() {
     // With all tokens, should include て and いる (normalized to 居る)
     let surfaces: Vec<_> = tokens.iter().map(|t| t.surface.as_str()).collect();
     assert!(surfaces.contains(&"食べる"), "Should include 食べる");
-    assert!(surfaces.contains(&"て"), "Should include て with all_tokens");
+    assert!(
+        surfaces.contains(&"て"),
+        "Should include て with all_tokens"
+    );
     // Note: いる normalizes to 居る (kanji form)
-    assert!(surfaces.contains(&"居る"), "Should include 居る (normalized いる) with all_tokens");
+    assert!(
+        surfaces.contains(&"居る"),
+        "Should include 居る (normalized いる) with all_tokens"
+    );
 }
 
 // ============================================================================
@@ -192,7 +216,10 @@ fn test_hiragana_normalization() {
 
     // Hiragana should normalize to kanji
     assert_eq!(tokens.len(), 1);
-    assert_eq!(tokens[0].surface, "食べる", "Should normalize hiragana to kanji");
+    assert_eq!(
+        tokens[0].surface, "食べる",
+        "Should normalize hiragana to kanji"
+    );
 }
 
 // ============================================================================

@@ -83,12 +83,18 @@ fn discover_dictionary() -> Option<String> {
                 // Prefer system_full.dic, fall back to system_small.dic
                 let full_path = path.join("system_full.dic");
                 if full_path.exists() {
-                    eprintln!("sudachi-sqlite: auto-discovered dictionary at {:?}", full_path);
+                    eprintln!(
+                        "sudachi-sqlite: auto-discovered dictionary at {:?}",
+                        full_path
+                    );
                     return Some(full_path.to_string_lossy().to_string());
                 }
                 let small_path = path.join("system_small.dic");
                 if small_path.exists() {
-                    eprintln!("sudachi-sqlite: auto-discovered dictionary at {:?}", small_path);
+                    eprintln!(
+                        "sudachi-sqlite: auto-discovered dictionary at {:?}",
+                        small_path
+                    );
                     return Some(small_path.to_string_lossy().to_string());
                 }
             }
@@ -114,7 +120,9 @@ pub fn load_tokenizer(use_surface_form: bool) -> Result<SearchTokenizer, c_int> 
         .ok()
         .or_else(discover_dictionary)
         .ok_or_else(|| {
-            eprintln!("sudachi-sqlite: SUDACHI_DICT_PATH not set and no dictionary found in ~/.sudachi/");
+            eprintln!(
+                "sudachi-sqlite: SUDACHI_DICT_PATH not set and no dictionary found in ~/.sudachi/"
+            );
             SQLITE_INTERNAL
         })?;
 
@@ -142,9 +150,9 @@ pub fn load_tokenizer(use_surface_form: bool) -> Result<SearchTokenizer, c_int> 
     // Create the dictionary with embedded char.def
     let dictionary = JapaneseDictionary::from_cfg_storage_with_embedded_chardef(&config, storage)
         .map_err(|e| {
-            eprintln!("sudachi-sqlite: failed to load dictionary: {}", e);
-            SQLITE_INTERNAL
-        })?;
+        eprintln!("sudachi-sqlite: failed to load dictionary: {}", e);
+        SQLITE_INTERNAL
+    })?;
 
     // Create tokenizer with appropriate form setting
     // Default: normalized form for better recall

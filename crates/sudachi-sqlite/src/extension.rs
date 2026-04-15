@@ -101,11 +101,7 @@ impl<'a> SqliteApi<'a> {
                 None,
             )
         };
-        if rc == SQLITE_OK {
-            Ok(())
-        } else {
-            Err(rc)
-        }
+        if rc == SQLITE_OK { Ok(()) } else { Err(rc) }
     }
 
     fn step(&self, stmt: *mut Sqlite3Stmt) -> c_int {
@@ -151,17 +147,14 @@ impl<'api> PreparedStatement<'api> {
     fn finalize(mut self) -> Result<(), c_int> {
         let rc = self.api.finalize(self.stmt);
         self.finalized = true;
-        if rc == SQLITE_OK {
-            Ok(())
-        } else {
-            Err(rc)
-        }
+        if rc == SQLITE_OK { Ok(()) } else { Err(rc) }
     }
 }
 
 impl Drop for PreparedStatement<'_> {
     fn drop(&mut self) {
-        if !self.finalized && !self.stmt.is_null()
+        if !self.finalized
+            && !self.stmt.is_null()
             && let Some(finalize) = self.api.raw.finalize
         {
             unsafe {
@@ -209,7 +202,10 @@ fn ensure_fts5_api_version(fts5_api: &FTS5API) -> Result<(), c_int> {
     if fts5_api.i_version >= 2 {
         Ok(())
     } else {
-        eprintln!("sudachi-sqlite: FTS5 API version {} is too old", fts5_api.i_version);
+        eprintln!(
+            "sudachi-sqlite: FTS5 API version {} is too old",
+            fts5_api.i_version
+        );
         Err(SQLITE_MISUSE)
     }
 }

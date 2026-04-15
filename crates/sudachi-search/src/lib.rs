@@ -709,8 +709,7 @@ pub fn extract_compounds(tokens: &[SearchToken]) -> Vec<CompoundWord> {
 
         while j < tokens.len() && tokens[j].is_colocated {
             // Only include if within the primary token's byte range
-            if tokens[j].byte_start >= primary.byte_start
-                && tokens[j].byte_end <= primary.byte_end
+            if tokens[j].byte_start >= primary.byte_start && tokens[j].byte_end <= primary.byte_end
             {
                 components.push(tokens[j].surface.clone());
             }
@@ -915,12 +914,28 @@ mod tests {
         // because they are often main verbs (行く, 来る, する, etc.)
         // Context-aware filtering is done separately
         let pos_iru = vec!["動詞".to_string(), "非自立可能".to_string()];
-        assert!(!should_filter_pos(&pos_iru), "いる should NOT be filtered by POS alone");
-        assert!(is_non_independent_verb(&pos_iru), "いる IS a non-independent verb");
+        assert!(
+            !should_filter_pos(&pos_iru),
+            "いる should NOT be filtered by POS alone"
+        );
+        assert!(
+            is_non_independent_verb(&pos_iru),
+            "いる IS a non-independent verb"
+        );
 
-        let pos_aru = vec!["動詞".to_string(), "非自立可能".to_string(), "*".to_string()];
-        assert!(!should_filter_pos(&pos_aru), "ある should NOT be filtered by POS alone");
-        assert!(is_non_independent_verb(&pos_aru), "ある IS a non-independent verb");
+        let pos_aru = vec![
+            "動詞".to_string(),
+            "非自立可能".to_string(),
+            "*".to_string(),
+        ];
+        assert!(
+            !should_filter_pos(&pos_aru),
+            "ある should NOT be filtered by POS alone"
+        );
+        assert!(
+            is_non_independent_verb(&pos_aru),
+            "ある IS a non-independent verb"
+        );
     }
 
     #[test]
@@ -941,24 +956,36 @@ mod tests {
             "*".to_string(),
             "下一段-バ行".to_string(),
         ];
-        assert!(!should_filter_pos(&pos_taberu), "食べる should NOT be filtered");
+        assert!(
+            !should_filter_pos(&pos_taberu),
+            "食べる should NOT be filtered"
+        );
     }
 
     #[test]
     fn test_keep_nouns() {
         // 名詞 (nouns) should NOT be filtered
         let pos_noun = vec!["名詞".to_string(), "普通名詞".to_string()];
-        assert!(!should_filter_pos(&pos_noun), "nouns should NOT be filtered");
+        assert!(
+            !should_filter_pos(&pos_noun),
+            "nouns should NOT be filtered"
+        );
 
         let pos_proper = vec!["名詞".to_string(), "固有名詞".to_string()];
-        assert!(!should_filter_pos(&pos_proper), "proper nouns should NOT be filtered");
+        assert!(
+            !should_filter_pos(&pos_proper),
+            "proper nouns should NOT be filtered"
+        );
     }
 
     #[test]
     fn test_keep_adjectives() {
         // 形容詞 (adjectives) should NOT be filtered
         let pos_adj = vec!["形容詞".to_string(), "一般".to_string()];
-        assert!(!should_filter_pos(&pos_adj), "adjectives should NOT be filtered");
+        assert!(
+            !should_filter_pos(&pos_adj),
+            "adjectives should NOT be filtered"
+        );
     }
 
     #[test]

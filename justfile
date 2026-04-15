@@ -101,7 +101,7 @@ dict-path:
 # pgrx (lives in ~/CODE/paradedb — cargo pgrx required)
 # ============================================================================
 
-PARADEDB := env_home() + "/CODE/paradedb"
+PARADEDB := env("HOME") + "/CODE/paradedb"
 
 # Build pg_search with Sudachi via pgrx (requires: cargo install cargo-pgrx && cargo pgrx init)
 pgrx-build:

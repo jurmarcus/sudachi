@@ -3,8 +3,8 @@
 //! Usage: SUDACHI_DICT_PATH=~/.sudachi/.../system.dic cargo run --example full_info -- "此処が僕の家。"
 
 use std::sync::Arc;
-use sudachi::analysis::stateless_tokenizer::StatelessTokenizer;
 use sudachi::analysis::Tokenize;
+use sudachi::analysis::stateless_tokenizer::StatelessTokenizer;
 use sudachi::config::Config;
 use sudachi::dic::dictionary::JapaneseDictionary;
 use sudachi::dic::storage::{Storage, SudachiDicData};
@@ -27,7 +27,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tokenizer = StatelessTokenizer::new(dictionary);
 
     println!("Input: {}", input);
-    println!("Length: {} bytes, {} chars", input.len(), input.chars().count());
+    println!(
+        "Length: {} bytes, {} chars",
+        input.len(),
+        input.chars().count()
+    );
     println!();
 
     // Mode C (coarsest - compounds preserved)
@@ -66,14 +70,26 @@ fn print_morphemes(
 
         println!();
         println!("┌─────────────────────────────────────────────────────────────────────────────┐");
-        println!("│ Token #{:<3}                                                                 │", i);
+        println!(
+            "│ Token #{:<3}                                                                 │",
+            i
+        );
         println!("├─────────────────────────────────────────────────────────────────────────────┤");
 
         // Surface and forms
         println!("│ Surface:          {:58}│", format!("\"{}\"", m.surface()));
-        println!("│ Dictionary Form:  {:58}│", format!("\"{}\"", m.dictionary_form()));
-        println!("│ Normalized Form:  {:58}│", format!("\"{}\"", m.normalized_form()));
-        println!("│ Reading Form:     {:58}│", format!("\"{}\"", m.reading_form()));
+        println!(
+            "│ Dictionary Form:  {:58}│",
+            format!("\"{}\"", m.dictionary_form())
+        );
+        println!(
+            "│ Normalized Form:  {:58}│",
+            format!("\"{}\"", m.normalized_form())
+        );
+        println!(
+            "│ Reading Form:     {:58}│",
+            format!("\"{}\"", m.reading_form())
+        );
 
         println!("├─────────────────────────────────────────────────────────────────────────────┤");
 
@@ -84,7 +100,9 @@ fn print_morphemes(
         if pos_str.len() <= 58 {
             println!("│ Part of Speech:   {:58}│", pos_str);
         } else {
-            println!("│ Part of Speech:                                                             │");
+            println!(
+                "│ Part of Speech:                                                             │"
+            );
             for chunk in pos_str.as_bytes().chunks(70) {
                 let s = String::from_utf8_lossy(chunk);
                 println!("│   {:72}│", s);
@@ -95,8 +113,16 @@ fn print_morphemes(
         println!("├─────────────────────────────────────────────────────────────────────────────┤");
 
         // Positions
-        println!("│ Byte Range:       [{:3} - {:3}]                                               │", m.begin(), m.end());
-        println!("│ Char Range:       [{:3} - {:3}]                                               │", m.begin_c(), m.end_c());
+        println!(
+            "│ Byte Range:       [{:3} - {:3}]                                               │",
+            m.begin(),
+            m.end()
+        );
+        println!(
+            "│ Char Range:       [{:3} - {:3}]                                               │",
+            m.begin_c(),
+            m.end_c()
+        );
 
         println!("├─────────────────────────────────────────────────────────────────────────────┤");
 
@@ -112,7 +138,9 @@ fn print_morphemes(
         let word_struct = word_info.word_structure();
 
         if !a_split.is_empty() || !b_split.is_empty() || !word_struct.is_empty() {
-            println!("├─────────────────────────────────────────────────────────────────────────────┤");
+            println!(
+                "├─────────────────────────────────────────────────────────────────────────────┤"
+            );
             if !a_split.is_empty() {
                 println!("│ A-Unit Split:     {:58}│", format!("{:?}", a_split));
             }
@@ -127,7 +155,9 @@ fn print_morphemes(
         // Synonyms
         let synonyms = m.synonym_group_ids();
         if !synonyms.is_empty() {
-            println!("├─────────────────────────────────────────────────────────────────────────────┤");
+            println!(
+                "├─────────────────────────────────────────────────────────────────────────────┤"
+            );
             println!("│ Synonym Groups:   {:58}│", format!("{:?}", synonyms));
         }
 
