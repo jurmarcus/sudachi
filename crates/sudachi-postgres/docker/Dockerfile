@@ -41,10 +41,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-toolchain "${RUST_VERSION}" -y
 
 ENV PATH="/usr/local/bin:/root/.cargo/bin:$PATH" \
-    PGX_HOME=/usr/lib/postgresql/${PG_VERSION_MAJOR}
+    PGX_HOME=/usr/lib/postgresql/${PG_VERSION_MAJOR} \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
 
-# Copy project because we need to extract the pgrx version
-COPY . /tmp/
+# Copy project and sibling crate dependencies for path resolution:
+#   tokenizers/Cargo.toml → path = "../../sudachi-tantivy" → /sudachi-tantivy/
+#   sudachi-tantivy/      → path = "../sudachi-search"     → /sudachi-search/
+COPY sudachi-postgres/ /tmp/
+COPY sudachi-tantivy/ /sudachi-tantivy/
+COPY sudachi-search/ /sudachi-search/
 
 # Install the pgrx version of pg_search
 WORKDIR /tmp/
@@ -63,13 +69,17 @@ FROM builder AS builder-pg_search
 ARG COMMIT_SHA
 ARG PARADEDB_VERSION
 ARG ENABLE_ANTITHESIS_INSTRUMENTATION
+ARG PG_SEARCH_FEATURES="icu"
 
 # Declare compile-time environment variables
 ENV COMMIT_SHA=${COMMIT_SHA} \
     PARADEDB_VERSION=${PARADEDB_VERSION} \
-    ENABLE_ANTITHESIS_INSTRUMENTATION=${ENABLE_ANTITHESIS_INSTRUMENTATION}
+    ENABLE_ANTITHESIS_INSTRUMENTATION=${ENABLE_ANTITHESIS_INSTRUMENTATION} \
+    PG_SEARCH_FEATURES=${PG_SEARCH_FEATURES}
 
-COPY . /tmp/
+COPY sudachi-postgres/ /tmp/
+COPY sudachi-tantivy/ /sudachi-tantivy/
+COPY sudachi-search/ /sudachi-search/
 
 # Download the ICU 76.1 library source. The version we use must be compatible with
 # https://github.com/google/rust_icu?tab=readme-ov-file#compatibility
@@ -85,20 +95,44 @@ RUN ./runConfigureICU Linux --prefix=/usr/local && \
     make install && \
     ldconfig && ldconfig # Yes, running it twice
 
+# Download Sudachi dictionary if sudachi feature is enabled
+WORKDIR /tmp
+RUN mkdir -p /opt/sudachi && \
+  if echo "$PG_SEARCH_FEATURES" | grep -q "sudachi"; then \
+    echo "Downloading Sudachi dictionary..." && \
+    curl -L https://github.com/WorksApplications/SudachiDict/releases/download/v20251022/sudachi-dictionary-20251022-full.zip -o /tmp/sudachi-dict.zip && \
+    python3 -m zipfile -e /tmp/sudachi-dict.zip /opt/sudachi/ && \
+    rm /tmp/sudachi-dict.zip && \
+    echo "Dictionary installed to /opt/sudachi/"; \
+  fi
+
 # Build the extension in release mode, but with debug symbols (which will be split out later)
 # Optionally install the Antithesis instrumentation library if this Docker build is intended for use with Antithesis
 RUN if [ "$ENABLE_ANTITHESIS_INSTRUMENTATION" = "true" ]; then \
     curl -L -o /usr/lib/libvoidstar.so https://antithesis.com/assets/instrumentation/libvoidstar.so; \
     export RUSTFLAGS="-Ccodegen-units=1 -Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-level=3 -Cllvm-args=-sanitizer-coverage-trace-pc-guard -Clink-args=-Wl,--build-id  -L/usr/lib/libvoidstar.so -lvoidstar" ; \
   fi; \
+  if echo "$PG_SEARCH_FEATURES" | grep -q "sudachi"; then \
+    export SUDACHI_DICT_PATH=$(find /opt/sudachi -name "system_full.dic" | head -1); \
+  fi; \
+  FEATURE_FLAGS=""; \
+  for feat in $(echo "${PG_SEARCH_FEATURES}" | tr ',' ' '); do \
+    FEATURE_FLAGS="${FEATURE_FLAGS} --features ${feat}"; \
+  done; \
   cd /tmp/pg_search && \
-  cargo pgrx package --features icu --profile=release-with-debug --pg-config "/usr/lib/postgresql/${PG_VERSION_MAJOR}/bin/pg_config"
+  cargo build ${FEATURE_FLAGS} --profile=release-with-debug
 
-# Strip debug symbols from the extension and add a debug link
-RUN LIB_PATH="/tmp/target/release-with-debug/pg_search-pg${PG_VERSION_MAJOR}/usr/lib/postgresql/${PG_VERSION_MAJOR}/lib/pg_search.so" && \
-    objcopy --only-keep-debug "${LIB_PATH}" "${LIB_PATH}.dbg" && \
-    objcopy --strip-debug "${LIB_PATH}" && \
-    objcopy --add-gnu-debuglink="${LIB_PATH}.dbg" "${LIB_PATH}"
+# Bypass cargo pgrx package (get_property crashes with UTF-8 error).
+# Install extension manually: .so from cargo build, SQL pre-generated locally via cargo pgrx schema.
+RUN PG_LIB="/usr/lib/postgresql/${PG_VERSION_MAJOR}/lib" && \
+    PG_EXT="/usr/share/postgresql/${PG_VERSION_MAJOR}/extension" && \
+    PG_SEARCH_VERSION="0.20.6" && \
+    cp /tmp/target/release-with-debug/libpg_search.so "${PG_LIB}/pg_search.so" && \
+    sed "s/@CARGO_VERSION@/${PG_SEARCH_VERSION}/" /tmp/pg_search/pg_search.control > "${PG_EXT}/pg_search.control" && \
+    cp /tmp/docker/pg_search--${PG_SEARCH_VERSION}.sql "${PG_EXT}/" && \
+    objcopy --only-keep-debug "${PG_LIB}/pg_search.so" "${PG_LIB}/pg_search.so.dbg" && \
+    objcopy --strip-debug "${PG_LIB}/pg_search.so" && \
+    objcopy --add-gnu-debuglink="${PG_LIB}/pg_search.so.dbg" "${PG_LIB}/pg_search.so"
 
 ######################
 # pgvector
@@ -167,7 +201,8 @@ ARG ENABLE_ANTITHESIS_INSTRUMENTATION
 
 # Declare runtime environment variables
 ENV PG_VERSION_MAJOR=${PG_VERSION_MAJOR} \
-    ENABLE_ANTITHESIS_INSTRUMENTATION=${ENABLE_ANTITHESIS_INSTRUMENTATION}
+    ENABLE_ANTITHESIS_INSTRUMENTATION=${ENABLE_ANTITHESIS_INSTRUMENTATION} \
+    SUDACHI_DICT_PATH=/opt/sudachi/sudachi-dictionary-20251022/system_full.dic
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c", "-e"]
 
@@ -182,9 +217,12 @@ COPY --from=builder-pg_ivm /tmp/pg_ivm/*.so /usr/lib/postgresql/${PG_VERSION_MAJ
 COPY --from=builder-pg_ivm /tmp/pg_ivm/*.control /usr/share/postgresql/${PG_VERSION_MAJOR}/extension/
 COPY --from=builder-pg_ivm /tmp/pg_ivm/*.sql /usr/share/postgresql/${PG_VERSION_MAJOR}/extension/
 
-# Copy the ParadeDB extension from its builder stage
-COPY --from=builder-pg_search /tmp/target/release-with-debug/pg_search-pg${PG_VERSION_MAJOR}/usr/lib/postgresql/${PG_VERSION_MAJOR}/lib/* /usr/lib/postgresql/${PG_VERSION_MAJOR}/lib/
-COPY --from=builder-pg_search /tmp/target/release-with-debug/pg_search-pg${PG_VERSION_MAJOR}/usr/share/postgresql/${PG_VERSION_MAJOR}/extension/* /usr/share/postgresql/${PG_VERSION_MAJOR}/extension/
+# Copy the ParadeDB extension from its builder stage (installed directly, not via pgrx package)
+COPY --from=builder-pg_search /usr/lib/postgresql/${PG_VERSION_MAJOR}/lib/pg_search* /usr/lib/postgresql/${PG_VERSION_MAJOR}/lib/
+COPY --from=builder-pg_search /usr/share/postgresql/${PG_VERSION_MAJOR}/extension/pg_search* /usr/share/postgresql/${PG_VERSION_MAJOR}/extension/
+
+# Copy Sudachi dictionary if it was downloaded during build
+COPY --from=builder-pg_search /opt/sudachi/ /opt/sudachi/
 
 # Install Barman Cloud and its dependencies for Azure, Google, and AWS via `pip`, and clean up after the installation to
 # minimize the size of the image. These are required for enabling Postgres backups in our CloudNativePG deployments.
@@ -271,7 +309,7 @@ RUN echo "deb http://apt.postgresql.org/pub/repos/apt/ bookworm-pgdg main" | tee
 WORKDIR /
 
 # Copy ParadeDB bootstrap script to install extensions and configure postgresql.conf
-COPY ./docker/bootstrap.sh /docker-entrypoint-initdb.d/10_bootstrap_paradedb.sh
+COPY sudachi-postgres/docker/bootstrap.sh /docker-entrypoint-initdb.d/10_bootstrap_paradedb.sh
 
 # The upstream `postgres` Docker image comes with its own `entrypoint.sh` script which
 # starts as `root` and then switches to the `postgres` user after running chown and chmod
