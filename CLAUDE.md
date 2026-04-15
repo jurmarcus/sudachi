@@ -11,7 +11,6 @@ crates/
 ├── sudachi-tantivy/   # Adapter: SearchToken → Tantivy (used by jurmarcus/paradedb)
 └── sudachi-wasm/      # Adapter: SearchToken → WebAssembly via wasm-bindgen
 
-wasm/                  # Legacy: standalone wasm reimplementation (third-party, may be removed)
 docker/
 └── postgres/          # Docker infrastructure for ParadeDB + Sudachi (no Rust source here)
 ```
