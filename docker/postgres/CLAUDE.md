@@ -1,4 +1,4 @@
-# CLAUDE.md — sudachi-postgres
+# CLAUDE.md — docker/postgres
 
 Docker infrastructure for running ParadeDB with the Sudachi Japanese tokenizer.
 
@@ -11,7 +11,7 @@ This directory contains ONLY Docker infrastructure. The Rust source lives at:
 ## Structure
 
 ```
-docker/
+docker/postgres/
 ├── Dockerfile             Clones jurmarcus/paradedb from GitHub, builds pg_search
 ├── bootstrap.sh           Postgres init: CREATE EXTENSION pg_search, set search_path
 ├── docker-compose.yml     Production compose
@@ -34,7 +34,7 @@ RUN git clone --depth 1 https://github.com/jurmarcus/paradedb /workspace
 # Cargo resolves the git dep automatically
 ```
 
-Build context: `crates/sudachi-postgres/docker/`
+Build context: `docker/postgres/`
 
 ## Commands
 
@@ -44,14 +44,14 @@ just pgrx-build   # cd ~/CODE/paradedb && cargo pgrx build -p pg_search --featur
 just pgrx-check   # cd ~/CODE/paradedb && cargo check -p pg_search --features icu,sudachi
 
 # Docker
-cd crates/sudachi-postgres/docker
+cd docker/postgres
 docker compose up
 ```
 
 ## Docker Build
 
 ```bash
-cd crates/sudachi-postgres/docker
+cd docker/postgres
 docker build \
   --build-arg PG_SEARCH_FEATURES="icu,sudachi" \
   -t paradedb-sudachi .

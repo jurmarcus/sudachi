@@ -1,10 +1,10 @@
 # justfile - sudachi monorepo
 # https://github.com/jurmarcus/sudachi
 #
-# Workspace crates (sudachi-search, sudachi-sqlite) use plain cargo.
-# Excluded crates have their own justfiles:
-#   crates/sudachi-wasm/   — wasm-pack build (just wasm <recipe>)
-#   crates/sudachi-postgres/ — pgrx (use pgrx-* recipes below)
+# Workspace crates (crates/*) use plain cargo.
+# Separate build targets have their own justfiles:
+#   wasm/          — wasm-pack build (just wasm <recipe>)
+#   docker/postgres/ — Docker (use pgrx-* recipes below for paradedb)
 
 default:
     @just --list
@@ -13,7 +13,7 @@ default:
 # Wasm module (wasm-pack, excluded from workspace)
 # ============================================================================
 
-mod wasm 'crates/sudachi-wasm'
+mod wasm 'wasm'
 
 # ============================================================================
 # Workspace builds
@@ -126,4 +126,4 @@ env:
 # Clean all build artifacts
 clean:
     cargo clean
-    rm -rf crates/sudachi-wasm/wasm/pkg/
+    rm -rf wasm/pkg/

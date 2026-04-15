@@ -5,14 +5,8 @@ members = [
     "crates/sudachi-sqlite",
     "crates/sudachi-tantivy",
 ]
-# Excluded from root workspace:
-# - sudachi-postgres: Docker infra only; the Rust pgrx extension lives in ~/CODE/paradedb
-# - sudachi-wasm:     wasm-pack build; lives at crates/sudachi-wasm/wasm/ with
-#                     resources/ as a sibling; build via `just wasm build`
-exclude = [
-    "crates/sudachi-postgres",
-    "crates/sudachi-wasm",
-]
+# Note: wasm/ and docker/postgres/ are separate build targets (wasm-pack, Docker),
+# not Cargo workspace members.
 
 [workspace.package]
 version = "0.1.0"

@@ -1,4 +1,4 @@
-# justfile - sudachi-wasm
+# justfile - wasm
 # WebAssembly distribution of sudachi.rs
 # Build with wasm-pack (not cargo) — resources/ must be populated first
 
@@ -12,23 +12,23 @@ default:
 
 # Build for browser (ES module)
 build:
-    wasm-pack build --release --target web wasm
+    wasm-pack build --release --target web .
 
 # Build for Node.js
 build-node:
-    wasm-pack build --release --target nodejs wasm
+    wasm-pack build --release --target nodejs .
 
 # Build for bundler (webpack, vite, etc.)
 build-bundler:
-    wasm-pack build --release --target bundler wasm
+    wasm-pack build --release --target bundler .
 
 # Dev build (faster, unoptimized)
 build-dev:
-    wasm-pack build --dev --target web wasm
+    wasm-pack build --dev --target web .
 
 # Check Rust compilation without WASM
 check:
-    cargo check --manifest-path wasm/Cargo.toml
+    cargo check
 
 # ============================================================================
 # Dictionary resources
@@ -59,11 +59,11 @@ dict-setup:
 
 # Run Rust unit tests (no WASM, no dictionary)
 test:
-    cargo test --manifest-path wasm/Cargo.toml
+    cargo test
 
 # Serve browser demo
 serve:
-    @echo "Open http://localhost:8080/wasm/example/ for demo"
+    @echo "Open http://localhost:8080/test/ for demo"
     npx http-server -p 8080 -c-1
 
 # ============================================================================
@@ -71,10 +71,10 @@ serve:
 # ============================================================================
 
 fmt:
-    cargo fmt --manifest-path wasm/Cargo.toml
+    cargo fmt
 
 lint:
-    cargo clippy --manifest-path wasm/Cargo.toml -- -D warnings
+    cargo clippy -- -D warnings
 
 fix: fmt lint
 
@@ -87,8 +87,8 @@ env:
     @ls resources/*.dic 2>/dev/null && echo "dictionary present" || echo "dictionary missing — run: just dict-setup"
 
 clean:
-    cargo clean --manifest-path wasm/Cargo.toml
-    rm -rf wasm/pkg/
+    cargo clean
+    rm -rf pkg/
 
 install-wasm-pack:
     @which wasm-pack > /dev/null || cargo install wasm-pack

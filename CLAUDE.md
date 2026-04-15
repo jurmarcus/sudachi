@@ -8,18 +8,20 @@ Japanese morphological analysis ecosystem — Sudachi tokenizers for SQLite, Pos
 crates/
 ├── sudachi-search/    # Core: B+C multi-granularity tokenization (search-engine agnostic)
 ├── sudachi-sqlite/    # Adapter: SearchToken → SQLite FTS5 colocated tokens (cdylib)
-├── sudachi-tantivy/   # Adapter: SearchToken → Tantivy (used by jurmarcus/paradedb)
-├── sudachi-wasm/      # WASM: sudachi.rs compiled for browser/Node.js (excluded from workspace)
-└── sudachi-postgres/  # Docker infrastructure for ParadeDB + Sudachi (no Rust source here)
+└── sudachi-tantivy/   # Adapter: SearchToken → Tantivy (used by jurmarcus/paradedb)
+
+wasm/                  # WASM: sudachi.rs compiled for browser/Node.js (wasm-pack, own workspace)
+docker/
+└── postgres/          # Docker infrastructure for ParadeDB + Sudachi (no Rust source here)
 ```
 
 ## Workspace
 
-Root workspace includes: `sudachi-search`, `sudachi-sqlite`, `sudachi-tantivy`.
+Root workspace members: `crates/sudachi-search`, `crates/sudachi-sqlite`, `crates/sudachi-tantivy`.
 
-Excluded:
-- `crates/sudachi-wasm/` — built with wasm-pack, not standard cargo
-- `crates/sudachi-postgres/` — just Docker infra, Rust lives in `~/CODE/paradedb`
+Separate build targets (not workspace members):
+- `wasm/` — wasm-pack build; run via `just wasm build`
+- `docker/postgres/` — Docker infra; Rust pgrx extension lives in `~/CODE/paradedb`
 
 ## ParadeDB Integration
 
@@ -39,8 +41,8 @@ just test         # Run workspace tests
 just fix          # Format + lint
 just ci           # Full CI: fmt check + clippy + tests
 
-just wasm build       # Build WASM (wasm-pack, browser ES module)
-just wasm dict-setup  # Install WASM dict resources
+just wasm build       # Build WASM (wasm-pack, browser ES module) — runs from wasm/
+just wasm dict-setup  # Install WASM dict resources into wasm/resources/
 
 just dict-setup   # Install Sudachi dictionary to ~/.sudachi/
 just dict-path    # Show resolved dictionary path
