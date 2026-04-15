@@ -1,0 +1,6 @@
+/target
+/crates/sudachi-wasm/pkg
+*.dic
+.DS_Store
+.env
+.envrc.local

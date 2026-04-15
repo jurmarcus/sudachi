@@ -1,0 +1,76 @@
+---
+title: Aggregate Syntax
+description: Accelerate aggregates with the ParadeDB index
+canonical: https://docs.paradedb.com/documentation/aggregates/overview
+---
+
+The `pdb.agg` function accepts an Elasticsearch-compatible JSON aggregate query string. It executes the aggregate using the
+[columnar](/welcome/architecture#columnar-index) portion of the ParadeDB index, which can significantly accelerate performance compared to vanilla Postgres.
+
+For example, the following query counts the total number of results for a search query.
+
+```sql
+SELECT pdb.agg('{"value_count": {"field": "id"}}')
+FROM mock_items
+WHERE category === 'electronics';
+```
+
+```ini Expected Response
+      agg
+----------------
+ {"value": 5.0}
+(1 row)
+```
+
+This query counts the number of results for every distinct group:
+
+```sql
+SELECT rating, pdb.agg('{"value_count": {"field": "id"}}')
+FROM mock_items
+WHERE category === 'electronics'
+GROUP BY rating
+ORDER BY rating
+LIMIT 5;
+```
+
+```ini Expected Response
+ rating |      agg
+--------+----------------
+      3 | {"value": 1.0}
+      4 | {"value": 3.0}
+      5 | {"value": 1.0}
+(3 rows)
+```
+
+## Multiple Aggregations
+
+To compute multiple aggregations at once, simply include multiple `pdb.agg` functions in the target list:
+
+```sql
+SELECT
+  pdb.agg('{"avg": {"field": "rating"}}') AS avg_rating,
+  pdb.agg('{"value_count": {"field": "id"}}') AS count
+FROM mock_items
+WHERE category === 'electronics';
+```
+
+```ini Expected Response
+   avg_rating   |     count
+----------------+----------------
+ {"value": 4.0} | {"value": 5.0}
+(1 row)
+```
+
+## JSON Fields
+
+If `metadata` is a JSON field with key `color`, use `metadata.color` as the field name:
+
+```sql
+SELECT pdb.agg('{"terms": {"field": "metadata.color"}}')
+FROM mock_items
+WHERE id @@@ pdb.all();
+```
+
+<Note>
+If a text or JSON field is used inside `pdb.agg`, it must use the [literal](/documentation/tokenizers/available-tokenizers/literal) tokenizer.
+</Note>

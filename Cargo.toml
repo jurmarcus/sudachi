@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/sudachi-search",
+    "crates/sudachi-tantivy",
+    "crates/sudachi-sqlite",
+    "crates/sudachi-wasm",
+]
+# pgrx has its own nested workspace — excluded from root to avoid resolver conflicts
+exclude = ["crates/sudachi-postgres"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/jurmarcus/sudachi"
+
+[workspace.dependencies]
+sudachi = { git = "https://github.com/WorksApplications/sudachi.rs", branch = "develop" }
+sudachi-search = { path = "crates/sudachi-search" }
+sudachi-tantivy = { path = "crates/sudachi-tantivy" }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

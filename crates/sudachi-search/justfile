@@ -1,0 +1,117 @@
+# justfile - sudachi-search
+# B+C multi-granularity Japanese tokenization for search engines
+
+# Default recipe - show available commands
+default:
+    @just --list
+
+# ============================================================================
+# Environment
+# ============================================================================
+
+# Auto-discover Sudachi dictionary
+export SUDACHI_DICT_PATH := env_var_or_default("SUDACHI_DICT_PATH", `find ~/.sudachi -name "system_full.dic" 2>/dev/null | head -1 || find ~/.sudachi -name "system_small.dic" 2>/dev/null | head -1 || echo ""`)
+
+# ============================================================================
+# Build
+# ============================================================================
+
+# Build library (release)
+build:
+    cargo build --release
+
+# Build library (dev)
+build-dev:
+    cargo build
+
+# Check compilation without building
+check:
+    cargo check
+
+# ============================================================================
+# Testing
+# ============================================================================
+
+# Run unit tests (no dictionary required)
+test:
+    cargo test
+
+# Run all tests including integration (requires dictionary)
+test-all:
+    @if [ -z "$SUDACHI_DICT_PATH" ] || [ ! -f "$SUDACHI_DICT_PATH" ]; then \
+        echo "ERROR: SUDACHI_DICT_PATH not set or dictionary not found"; \
+        echo "Run: just dict-setup"; \
+        exit 1; \
+    fi
+    cargo test -- --include-ignored
+
+# Run tests with output
+test-verbose:
+    cargo test -- --nocapture
+
+# ============================================================================
+# Code Quality
+# ============================================================================
+
+# Format code
+fmt:
+    cargo fmt
+
+# Run clippy linter
+lint:
+    cargo clippy -- -D warnings
+
+# Format and lint
+fix: fmt lint
+
+# ============================================================================
+# Dictionary Setup
+# ============================================================================
+
+# Download and setup Sudachi dictionary
+dict-setup:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p ~/.sudachi
+    if [ ! -d ~/.sudachi/sudachi-dictionary-* ]; then
+        echo "Downloading Sudachi dictionary..."
+        curl -L https://github.com/WorksApplications/SudachiDict/releases/download/v20251022/sudachi-dictionary-20251022-full.zip -o /tmp/sudachi-dict.zip
+        unzip -o /tmp/sudachi-dict.zip -d ~/.sudachi/
+        rm /tmp/sudachi-dict.zip
+        echo "Dictionary installed to ~/.sudachi/"
+    else
+        echo "Dictionary already exists at ~/.sudachi/"
+    fi
+
+# Show dictionary path
+dict-path:
+    @echo "SUDACHI_DICT_PATH: ${SUDACHI_DICT_PATH:-not found}"
+
+# ============================================================================
+# Examples
+# ============================================================================
+
+# Run basic tokenization example
+example:
+    @if [ -z "$SUDACHI_DICT_PATH" ] || [ ! -f "$SUDACHI_DICT_PATH" ]; then \
+        echo "ERROR: SUDACHI_DICT_PATH not set"; \
+        exit 1; \
+    fi
+    cargo run --example basic
+
+# ============================================================================
+# Utilities
+# ============================================================================
+
+# Show environment
+env:
+    @echo "SUDACHI_DICT_PATH: ${SUDACHI_DICT_PATH:-not set}"
+    @echo "PWD: $(pwd)"
+
+# Clean build artifacts
+clean:
+    cargo clean
+
+# Watch and rebuild on changes
+watch:
+    cargo watch -x check

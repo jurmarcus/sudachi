@@ -1,0 +1,12 @@
+[package]
+name = "sudachi-tantivy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Tantivy tokenizer adapter for sudachi-search (B+C multi-granularity)"
+keywords = ["japanese", "tokenizer", "tantivy", "search", "sudachi"]
+categories = ["text-processing"]
+
+[dependencies]
+sudachi-search.workspace = true

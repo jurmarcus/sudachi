@@ -1,0 +1,12 @@
+[package]
+name = "sudachi-search"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Multi-granularity Japanese tokenization for search engines using Sudachi"
+keywords = ["japanese", "tokenizer", "search", "nlp", "sudachi"]
+categories = ["text-processing", "internationalization"]
+
+[dependencies]
+sudachi.workspace = true

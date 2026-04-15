@@ -1,0 +1,200 @@
+# justfile - sudachi-postgres
+# ParadeDB fork with Sudachi Japanese tokenizer for PostgreSQL full-text search
+
+# Default recipe - show available commands
+default:
+    @just --list
+
+# ============================================================================
+# Environment
+# ============================================================================
+
+# Auto-discover Sudachi dictionary
+export SUDACHI_DICT_PATH := env_var_or_default("SUDACHI_DICT_PATH", `find ~/.sudachi -name "system_full.dic" 2>/dev/null | head -1 || find ~/.sudachi -name "system_small.dic" 2>/dev/null | head -1 || echo ""`)
+
+# PostgreSQL version
+PG_VERSION := "17"
+
+# macOS linker flags for pgrx
+RUSTFLAGS := "-Clink-arg=-Wl,-undefined,dynamic_lookup"
+
+# ============================================================================
+# Build
+# ============================================================================
+
+# Build pg_search with Sudachi (release)
+build:
+    @if [ -z "$SUDACHI_DICT_PATH" ] || [ ! -f "$SUDACHI_DICT_PATH" ]; then \
+        echo "ERROR: SUDACHI_DICT_PATH not set or dictionary not found"; \
+        echo "Run: just dict-setup"; \
+        exit 1; \
+    fi
+    cd pg_search && RUSTFLAGS="{{ RUSTFLAGS }}" cargo build --release --no-default-features --features sudachi,pg{{ PG_VERSION }}
+
+# Build pg_search (dev)
+build-dev:
+    @if [ -z "$SUDACHI_DICT_PATH" ] || [ ! -f "$SUDACHI_DICT_PATH" ]; then \
+        echo "ERROR: SUDACHI_DICT_PATH not set"; \
+        exit 1; \
+    fi
+    cd pg_search && RUSTFLAGS="{{ RUSTFLAGS }}" cargo build --no-default-features --features sudachi,pg{{ PG_VERSION }}
+
+# Check compilation
+check:
+    cd pg_search && cargo check --no-default-features --features sudachi,pg{{ PG_VERSION }}
+
+# ============================================================================
+# Install
+# ============================================================================
+
+# Install extension to PostgreSQL
+install:
+    @if [ -z "$SUDACHI_DICT_PATH" ] || [ ! -f "$SUDACHI_DICT_PATH" ]; then \
+        echo "ERROR: SUDACHI_DICT_PATH not set"; \
+        exit 1; \
+    fi
+    cd pg_search && RUSTFLAGS="{{ RUSTFLAGS }}" cargo pgrx install --no-default-features --features sudachi,pg{{ PG_VERSION }}
+
+# ============================================================================
+# PostgreSQL Management
+# ============================================================================
+
+# Start PostgreSQL with Sudachi dictionary path
+pg-start:
+    @if [ -z "$SUDACHI_DICT_PATH" ]; then \
+        echo "WARNING: SUDACHI_DICT_PATH not set, tokenizer may not work"; \
+    fi
+    pg_ctl -D /opt/homebrew/var/postgresql@{{ PG_VERSION }} start
+
+# Stop PostgreSQL
+pg-stop:
+    pg_ctl -D /opt/homebrew/var/postgresql@{{ PG_VERSION }} stop
+
+# Restart PostgreSQL
+pg-restart: pg-stop pg-start
+
+# PostgreSQL status
+pg-status:
+    pg_ctl -D /opt/homebrew/var/postgresql@{{ PG_VERSION }} status || true
+
+# Connect to PostgreSQL
+pg-connect:
+    psql -U $(whoami) postgres
+
+# ============================================================================
+# Testing
+# ============================================================================
+
+# Run tokenizers tests
+test-tokenizers:
+    @if [ -z "$SUDACHI_DICT_PATH" ] || [ ! -f "$SUDACHI_DICT_PATH" ]; then \
+        echo "ERROR: SUDACHI_DICT_PATH not set"; \
+        exit 1; \
+    fi
+    cd tokenizers && cargo test --features sudachi
+
+# Run pg_search tests
+test-pg:
+    @if [ -z "$SUDACHI_DICT_PATH" ] || [ ! -f "$SUDACHI_DICT_PATH" ]; then \
+        echo "ERROR: SUDACHI_DICT_PATH not set"; \
+        exit 1; \
+    fi
+    cd pg_search && RUSTFLAGS="{{ RUSTFLAGS }}" cargo pgrx test pg{{ PG_VERSION }} --no-default-features --features sudachi
+
+# Run all tests
+test: test-tokenizers
+
+# Interactive SQL test
+test-sql: install pg-start
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Testing Sudachi tokenizer in PostgreSQL..."
+    psql -U $(whoami) postgres -c "DROP EXTENSION IF EXISTS pg_search CASCADE;" \
+        -c "CREATE EXTENSION pg_search;" \
+        -c "DROP TABLE IF EXISTS documents;" \
+        -c "CREATE TABLE documents (id SERIAL PRIMARY KEY, content TEXT);" \
+        -c "INSERT INTO documents (content) VALUES ('東京都立大学は東京にある公立大学です'), ('大学院で研究しています'), ('私は大学で日本語を勉強しました');" \
+        -c "DROP INDEX IF EXISTS docs_idx;" \
+        -c "CREATE INDEX docs_idx ON documents USING bm25(id, (content::pdb.sudachi)) WITH (key_field='id');" \
+        -c "SELECT '=== Searching for 大学 ===' as info;" \
+        -c "SELECT * FROM documents WHERE id @@@ 'content:大学';" \
+        -c "SELECT '=== Success! B+C multi-granularity working ===' as result;"
+
+# ============================================================================
+# Code Quality
+# ============================================================================
+
+# Format code
+fmt:
+    cargo fmt --all
+
+# Run clippy
+lint:
+    cd pg_search && cargo clippy --no-default-features --features sudachi,pg{{ PG_VERSION }} -- -D warnings
+    cd tokenizers && cargo clippy --features sudachi -- -D warnings
+
+# Format and lint
+fix: fmt lint
+
+# ============================================================================
+# Dictionary Setup
+# ============================================================================
+
+# Download and setup Sudachi dictionary
+dict-setup:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p ~/.sudachi
+    if [ ! -d ~/.sudachi/sudachi-dictionary-* ]; then
+        echo "Downloading Sudachi dictionary..."
+        curl -L https://github.com/WorksApplications/SudachiDict/releases/download/v20251022/sudachi-dictionary-20251022-full.zip -o /tmp/sudachi-dict.zip
+        unzip -o /tmp/sudachi-dict.zip -d ~/.sudachi/
+        rm /tmp/sudachi-dict.zip
+        echo "Dictionary installed to ~/.sudachi/"
+    else
+        echo "Dictionary already exists at ~/.sudachi/"
+    fi
+
+# Show dictionary path
+dict-path:
+    @echo "SUDACHI_DICT_PATH: ${SUDACHI_DICT_PATH:-not found}"
+
+# ============================================================================
+# Prerequisites
+# ============================================================================
+
+# Install cargo-pgrx
+install-pgrx:
+    cargo install cargo-pgrx@0.16.1
+
+# Initialize pgrx for PostgreSQL
+init-pgrx:
+    cargo pgrx init --pg{{ PG_VERSION }}=$(brew --prefix postgresql@{{ PG_VERSION }})/bin/pg_config
+
+# Install all prerequisites
+install-deps: install-pgrx init-pgrx dict-setup
+    @echo "All dependencies installed"
+
+# ============================================================================
+# Utilities
+# ============================================================================
+
+# Show environment
+env:
+    @echo "SUDACHI_DICT_PATH: ${SUDACHI_DICT_PATH:-not set}"
+    @echo "PG_VERSION: {{ PG_VERSION }}"
+    @echo "RUSTFLAGS: {{ RUSTFLAGS }}"
+    @echo "PWD: $(pwd)"
+    @pg_config --version 2>/dev/null || echo "pg_config not found"
+
+# Clean build artifacts
+clean:
+    cargo clean
+
+# Watch and rebuild on changes
+watch:
+    cd pg_search && cargo watch -x 'check --no-default-features --features sudachi,pg{{ PG_VERSION }}'
+
+# Full setup from scratch
+setup: install-deps build install
+    @echo "Setup complete! Run 'just test-sql' to verify"
