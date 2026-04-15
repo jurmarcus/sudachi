@@ -45,20 +45,16 @@ ENV PATH="/usr/local/bin:/root/.cargo/bin:$PATH" \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
 
-# Copy project and sibling crate dependencies for path resolution:
-#   tokenizers/Cargo.toml → path = "../../sudachi-tantivy" → /sudachi-tantivy/
-#   sudachi-tantivy/      → path = "../sudachi-search"     → /sudachi-search/
-COPY sudachi-postgres/ /tmp/
-COPY sudachi-tantivy/ /sudachi-tantivy/
-COPY sudachi-search/ /sudachi-search/
+# Clone jurmarcus/paradedb (includes Sudachi tokenizer integration).
+# Cargo resolves sudachi-tantivy via git dep — no sibling COPY hacks needed.
+RUN git clone --depth 1 https://github.com/jurmarcus/paradedb /workspace
 
 # Install the pgrx version of pg_search
-WORKDIR /tmp/
+WORKDIR /workspace
 RUN PGRX_VERSION=$(cargo tree --depth 1 -i pgrx -p pg_search | head -n 1 | sed -E 's/.*v([0-9]+\.[0-9]+\.[0-9]+).*/\1/') && \
     echo "PGRX_VERSION=$PGRX_VERSION" && \
     cargo install --locked cargo-pgrx --version "${PGRX_VERSION}" && \
-    cargo pgrx init "--pg${PG_VERSION_MAJOR}=/usr/lib/postgresql/${PG_VERSION_MAJOR}/bin/pg_config" && \
-    rm -rf /tmp/Cargo.toml
+    cargo pgrx init "--pg${PG_VERSION_MAJOR}=/usr/lib/postgresql/${PG_VERSION_MAJOR}/bin/pg_config"
 
 ######################
 # pg_search
@@ -77,9 +73,8 @@ ENV COMMIT_SHA=${COMMIT_SHA} \
     ENABLE_ANTITHESIS_INSTRUMENTATION=${ENABLE_ANTITHESIS_INSTRUMENTATION} \
     PG_SEARCH_FEATURES=${PG_SEARCH_FEATURES}
 
-COPY sudachi-postgres/ /tmp/
-COPY sudachi-tantivy/ /sudachi-tantivy/
-COPY sudachi-search/ /sudachi-search/
+# Pre-generated SQL schema file (bypass cargo pgrx package UTF-8 crash)
+COPY pg_search--0.20.6.sql /workspace/docker/pg_search--0.20.6.sql
 
 # Download the ICU 76.1 library source. The version we use must be compatible with
 # https://github.com/google/rust_icu?tab=readme-ov-file#compatibility
@@ -108,6 +103,7 @@ RUN mkdir -p /opt/sudachi && \
 
 # Build the extension in release mode, but with debug symbols (which will be split out later)
 # Optionally install the Antithesis instrumentation library if this Docker build is intended for use with Antithesis
+WORKDIR /workspace
 RUN if [ "$ENABLE_ANTITHESIS_INSTRUMENTATION" = "true" ]; then \
     curl -L -o /usr/lib/libvoidstar.so https://antithesis.com/assets/instrumentation/libvoidstar.so; \
     export RUSTFLAGS="-Ccodegen-units=1 -Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-level=3 -Cllvm-args=-sanitizer-coverage-trace-pc-guard -Clink-args=-Wl,--build-id  -L/usr/lib/libvoidstar.so -lvoidstar" ; \
@@ -119,7 +115,7 @@ RUN if [ "$ENABLE_ANTITHESIS_INSTRUMENTATION" = "true" ]; then \
   for feat in $(echo "${PG_SEARCH_FEATURES}" | tr ',' ' '); do \
     FEATURE_FLAGS="${FEATURE_FLAGS} --features ${feat}"; \
   done; \
-  cd /tmp/pg_search && \
+  cd /workspace/pg_search && \
   cargo build ${FEATURE_FLAGS} --profile=release-with-debug
 
 # Bypass cargo pgrx package (get_property crashes with UTF-8 error).
@@ -127,9 +123,9 @@ RUN if [ "$ENABLE_ANTITHESIS_INSTRUMENTATION" = "true" ]; then \
 RUN PG_LIB="/usr/lib/postgresql/${PG_VERSION_MAJOR}/lib" && \
     PG_EXT="/usr/share/postgresql/${PG_VERSION_MAJOR}/extension" && \
     PG_SEARCH_VERSION="0.20.6" && \
-    cp /tmp/target/release-with-debug/libpg_search.so "${PG_LIB}/pg_search.so" && \
-    sed "s/@CARGO_VERSION@/${PG_SEARCH_VERSION}/" /tmp/pg_search/pg_search.control > "${PG_EXT}/pg_search.control" && \
-    cp /tmp/docker/pg_search--${PG_SEARCH_VERSION}.sql "${PG_EXT}/" && \
+    cp /workspace/target/release-with-debug/libpg_search.so "${PG_LIB}/pg_search.so" && \
+    sed "s/@CARGO_VERSION@/${PG_SEARCH_VERSION}/" /workspace/pg_search/pg_search.control > "${PG_EXT}/pg_search.control" && \
+    cp /workspace/docker/pg_search--${PG_SEARCH_VERSION}.sql "${PG_EXT}/" && \
     objcopy --only-keep-debug "${PG_LIB}/pg_search.so" "${PG_LIB}/pg_search.so.dbg" && \
     objcopy --strip-debug "${PG_LIB}/pg_search.so" && \
     objcopy --add-gnu-debuglink="${PG_LIB}/pg_search.so.dbg" "${PG_LIB}/pg_search.so"
@@ -194,7 +190,7 @@ FROM postgres:${PG_VERSION_MAJOR}-bookworm AS paradedb
 
 LABEL maintainer="ParadeDB - https://paradedb.com" \
     org.opencontainers.image.description="ParadeDB - The Transactional Elasticsearch Alternative Built on Postgres" \
-    org.opencontainers.image.source="https://github.com/paradedb/paradedb"
+    org.opencontainers.image.source="https://github.com/jurmarcus/paradedb"
 
 ARG PG_VERSION_MAJOR
 ARG ENABLE_ANTITHESIS_INSTRUMENTATION
@@ -309,7 +305,8 @@ RUN echo "deb http://apt.postgresql.org/pub/repos/apt/ bookworm-pgdg main" | tee
 WORKDIR /
 
 # Copy ParadeDB bootstrap script to install extensions and configure postgresql.conf
-COPY sudachi-postgres/docker/bootstrap.sh /docker-entrypoint-initdb.d/10_bootstrap_paradedb.sh
+# Build context: crates/sudachi-postgres/docker/
+COPY bootstrap.sh /docker-entrypoint-initdb.d/10_bootstrap_paradedb.sh
 
 # The upstream `postgres` Docker image comes with its own `entrypoint.sh` script which
 # starts as `root` and then switches to the `postgres` user after running chown and chmod

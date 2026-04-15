@@ -98,16 +98,18 @@ dict-path:
     @echo "SUDACHI_DICT_PATH: ${SUDACHI_DICT_PATH:-not found}"
 
 # ============================================================================
-# pgrx (own nested workspace — cargo pgrx required)
+# pgrx (lives in ~/CODE/paradedb — cargo pgrx required)
 # ============================================================================
 
-# Build sudachi-postgres via pgrx (requires: cargo install cargo-pgrx && cargo pgrx init)
-pgrx-build:
-    cargo pgrx build --manifest-path crates/sudachi-postgres/Cargo.toml
+PARADEDB := env_home() + "/CODE/paradedb"
 
-# Check sudachi-postgres
+# Build pg_search with Sudachi via pgrx (requires: cargo install cargo-pgrx && cargo pgrx init)
+pgrx-build:
+    cd {{PARADEDB}} && cargo pgrx build -p pg_search --features icu,sudachi
+
+# Check pg_search with Sudachi
 pgrx-check:
-    cargo check --manifest-path crates/sudachi-postgres/Cargo.toml
+    cd {{PARADEDB}} && cargo check -p pg_search --features icu,sudachi
 
 # ============================================================================
 # Utilities
