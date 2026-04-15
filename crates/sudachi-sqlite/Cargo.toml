@@ -9,12 +9,17 @@ keywords = ["japanese", "tokenizer", "sqlite", "fts5", "morphological-analysis"]
 categories = ["text-processing", "database"]
 
 [lib]
-crate-type = ["cdylib"]  # Loadable SQLite extension
+# cdylib: loadable SQLite extension (.so/.dylib)
+# rlib: enables #[test] items — required for `cargo test -p sudachi-sqlite`
+crate-type = ["cdylib", "rlib"]
+
+[lints]
+workspace = true
 
 [dependencies]
-libc = { version = "0.2", default-features = false }
-sqlite-loadable = "0.0.5"
-sqlite3ext-sys = "0.0.1"
+libc.workspace = true
+sqlite-loadable.workspace = true
+sqlite3ext-sys = "0.0.1" # for sqlite3_stmt (not in sqlite-loadable's prelude)
 sudachi.workspace = true
 sudachi-search.workspace = true
 

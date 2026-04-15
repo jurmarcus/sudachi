@@ -242,17 +242,18 @@ pub extern "C" fn fts5_create_sudachi_tokenizer(
     n_arg: c_int,
     fts5_tokenizer: *mut *mut Fts5Tokenizer,
 ) -> c_int {
-    // Parse arguments to check for "surface" option
-    let use_surface_form = parse_tokenizer_args(az_arg, n_arg);
-
-    let tokenizer = match load_tokenizer(use_surface_form) {
-        Ok(tokenizer) => Box::new(Fts5Tokenizer { tokenizer }),
-        Err(_) => return SQLITE_INTERNAL,
-    };
-    unsafe {
-        *fts5_tokenizer = Box::into_raw(tokenizer);
-    }
-    SQLITE_OK
+    // Panic boundary required: load_tokenizer allocates ~70MB and invokes sudachi.rs
+    // internals that may panic (OOM, corrupt dictionary, internal assertions).
+    // Any panic crossing this extern "C" boundary is undefined behaviour.
+    crate::common::ffi_panic_boundary(|| {
+        let use_surface_form = parse_tokenizer_args(az_arg, n_arg);
+        let tokenizer = load_tokenizer(use_surface_form).map_err(|_| SQLITE_INTERNAL)?;
+        let boxed = Box::new(Fts5Tokenizer { tokenizer });
+        unsafe {
+            *fts5_tokenizer = Box::into_raw(boxed);
+        }
+        Ok(())
+    })
 }
 
 /// Parses tokenizer arguments to check for "surface" option.
@@ -283,8 +284,11 @@ fn parse_tokenizer_args(az_arg: *const *const c_uchar, n_arg: c_int) -> bool {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn fts5_delete_sudachi_tokenizer(fts5_tokenizer: *mut Fts5Tokenizer) {
-    let tokenizer = unsafe { Box::from_raw(fts5_tokenizer) };
-    drop(tokenizer);
+    // Panic boundary required: drop runs sudachi.rs destructors which may panic.
+    crate::common::ffi_panic_boundary(|| {
+        let _ = unsafe { Box::from_raw(fts5_tokenizer) };
+        Ok(())
+    });
 }
 
 #[unsafe(no_mangle)]

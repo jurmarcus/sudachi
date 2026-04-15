@@ -8,5 +8,8 @@ description = "Multi-granularity Japanese tokenization for search engines using 
 keywords = ["japanese", "tokenizer", "search", "nlp", "sudachi"]
 categories = ["text-processing", "internationalization"]
 
+[lints]
+workspace = true
+
 [dependencies]
 sudachi.workspace = true

@@ -2,15 +2,17 @@
 resolver = "2"
 members = [
     "crates/sudachi-search",
-    "crates/sudachi-tantivy",
     "crates/sudachi-sqlite",
 ]
 # Excluded from root workspace:
 # - sudachi-postgres: pgrx extension with its own nested workspace
-# - sudachi-wasm: wasm-pack build, not standard cargo; resource paths assume outer wrapper layout
+# - sudachi-wasm:     wasm-pack build; lives at crates/sudachi-wasm/wasm/ with
+#                     resources/ as a sibling; build via `just wasm build`
+# - sudachi-tantivy:  Tantivy adapter — in-progress, not yet ready for workspace
 exclude = [
     "crates/sudachi-postgres",
     "crates/sudachi-wasm",
+    "crates/sudachi-tantivy",
 ]
 
 [workspace.package]
@@ -18,11 +20,18 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/jurmarcus/sudachi"
+rust-version = "1.85"
 
 [workspace.dependencies]
-sudachi = { git = "https://github.com/WorksApplications/sudachi.rs", branch = "develop" }
+# Upstream sudachi.rs — pinned to a known-good commit for reproducible builds.
+# To update: run `cargo update -p sudachi` and commit the new Cargo.lock.
+sudachi = { git = "https://github.com/WorksApplications/sudachi.rs", rev = "b568decbbd4ea209dec847821dc1f5069a0f2ff5" }
 sudachi-search = { path = "crates/sudachi-search" }
-sudachi-tantivy = { path = "crates/sudachi-tantivy" }
+libc = { version = "0.2", default-features = false }
+sqlite-loadable = "0.0.5"
+
+[workspace.lints.clippy]
+all = "warn"
 
 [profile.release]
 opt-level = 3

@@ -1,0 +1,94 @@
+# justfile - sudachi-wasm
+# WebAssembly distribution of sudachi.rs
+# Build with wasm-pack (not cargo) — resources/ must be populated first
+
+# Default recipe
+default:
+    @just --list
+
+# ============================================================================
+# Build
+# ============================================================================
+
+# Build for browser (ES module)
+build:
+    wasm-pack build --release --target web wasm
+
+# Build for Node.js
+build-node:
+    wasm-pack build --release --target nodejs wasm
+
+# Build for bundler (webpack, vite, etc.)
+build-bundler:
+    wasm-pack build --release --target bundler wasm
+
+# Dev build (faster, unoptimized)
+build-dev:
+    wasm-pack build --dev --target web wasm
+
+# Check Rust compilation without WASM
+check:
+    cargo check --manifest-path wasm/Cargo.toml
+
+# ============================================================================
+# Dictionary resources
+# ============================================================================
+
+# Download Sudachi dictionary config files into resources/
+dict-setup:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p resources
+    if [ ! -f resources/system_full.dic ]; then
+        echo "Downloading Sudachi full dictionary..."
+        curl -L https://github.com/WorksApplications/SudachiDict/releases/download/v20251022/sudachi-dictionary-20251022-full.zip -o /tmp/sudachi-dict.zip
+        unzip -o /tmp/sudachi-dict.zip -d /tmp/sudachi-temp/
+        cp /tmp/sudachi-temp/*/system_full.dic resources/
+        cp /tmp/sudachi-temp/*/char.def resources/ 2>/dev/null || true
+        cp /tmp/sudachi-temp/*/rewrite.def resources/ 2>/dev/null || true
+        cp /tmp/sudachi-temp/*/unk.def resources/ 2>/dev/null || true
+        rm -rf /tmp/sudachi-temp /tmp/sudachi-dict.zip
+        echo "Dictionary installed to resources/"
+    else
+        echo "Dictionary already exists"
+    fi
+
+# ============================================================================
+# Testing
+# ============================================================================
+
+# Run Rust unit tests (no WASM, no dictionary)
+test:
+    cargo test --manifest-path wasm/Cargo.toml
+
+# Serve browser demo
+serve:
+    @echo "Open http://localhost:8080/wasm/example/ for demo"
+    npx http-server -p 8080 -c-1
+
+# ============================================================================
+# Code quality
+# ============================================================================
+
+fmt:
+    cargo fmt --manifest-path wasm/Cargo.toml
+
+lint:
+    cargo clippy --manifest-path wasm/Cargo.toml -- -D warnings
+
+fix: fmt lint
+
+# ============================================================================
+# Utilities
+# ============================================================================
+
+env:
+    @echo "wasm-pack: $(which wasm-pack 2>/dev/null || echo 'not installed')"
+    @ls resources/*.dic 2>/dev/null && echo "dictionary present" || echo "dictionary missing — run: just dict-setup"
+
+clean:
+    cargo clean --manifest-path wasm/Cargo.toml
+    rm -rf wasm/pkg/
+
+install-wasm-pack:
+    @which wasm-pack > /dev/null || cargo install wasm-pack

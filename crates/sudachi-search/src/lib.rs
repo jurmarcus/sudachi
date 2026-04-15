@@ -131,6 +131,17 @@ fn should_filter_pos(pos: &[String]) -> bool {
     false
 }
 
+/// Returns true if the token is a non-independent verb (動詞/非自立可能).
+///
+/// Non-independent verbs like いる, ある, する are NOT filtered by `should_filter_pos`
+/// because they frequently appear as main verbs. Context-aware filtering (e.g. dropping
+/// auxiliary いる in 食べている) is a separate concern handled downstream.
+#[cfg(test)]
+#[inline]
+fn is_non_independent_verb(pos: &[String]) -> bool {
+    pos.len() >= 2 && pos[0] == "動詞" && pos[1] == "非自立可能"
+}
+
 /// A token emitted by the search tokenizer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchToken {

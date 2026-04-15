@@ -80,12 +80,6 @@ type TokenFunction = extern "C" fn(
     i_start: c_int,        // Byte offset
     i_end: c_int,          // Byte offset
 ) -> c_int;
-
-// Emit regular token
-callback.emit(surface.as_bytes(), byte_start, byte_end)?;
-
-// Emit colocated token
-callback.emit_colocated(surface.as_bytes(), byte_start, byte_end)?;
 ```
 
 ### Translation from sudachi-search
@@ -102,7 +96,8 @@ for token in tokens {
 
 ### Panic Safety (CRITICAL)
 
-Rust panics must NOT cross FFI boundary:
+Rust panics MUST NOT cross the FFI boundary. ALL three callbacks (xCreate, xDelete, xTokenize)
+are wrapped in `ffi_panic_boundary`:
 
 ```rust
 pub fn ffi_panic_boundary<F>(operation: F) -> c_int
@@ -116,22 +111,19 @@ where F: FnOnce() -> Result<(), c_int> + UnwindSafe
 }
 ```
 
+Do NOT add `panic = "abort"` to Cargo.toml — it would disable `catch_unwind` and cause UB.
+
+### crate-type = ["cdylib", "rlib"]
+
+- `cdylib` — produces the loadable SQLite extension (`.dylib`/`.so`)
+- `rlib` — required for `#[test]` to work with `cargo test -p sudachi-sqlite`
+
 ### Dictionary Loading
 
 ```rust
 pub fn load_tokenizer(use_surface_form: bool) -> Result<SearchTokenizer, c_int> {
     let dict_path = std::env::var("SUDACHI_DICT_PATH")?;
-    let dict_bytes = std::fs::read(&dict_path)?;
-    let storage = SudachiDicData::new(Storage::Owned(dict_bytes));
-    let config = Config::minimal_at(dict_path.parent()?);
-    let dictionary = JapaneseDictionary::from_cfg_storage_with_embedded_chardef(&config, storage)?;
-
-    let tokenizer = SearchTokenizer::new(Arc::new(dictionary));
-    if use_surface_form {
-        Ok(tokenizer.with_surface_form())
-    } else {
-        Ok(tokenizer)  // Normalized by default
-    }
+    // ...
 }
 ```
 
@@ -155,47 +147,28 @@ SELECT * FROM docs WHERE docs MATCH '大学';  -- FOUND!
 ## Commands
 
 ```bash
-# Setup dictionary (one-time)
-just dict-setup
-
-# Build extension
-just build
-
-# Install to ~/.local/lib/
-just install
-
-# Run tests
-just test
-
-# Interactive SQLite test
-just test-sqlite
-
-# Format and lint
-just fix
-
-# Full rebuild and reinstall
-just rebuild
-
-# Show environment
-just env
+just build        # Build extension (from repo root)
+just test         # Run workspace tests
+just fix          # Format and lint
+just dict-setup   # Download dictionary
 ```
 
-All commands use `just` (task runner). Run `just --list` to see all available commands.
+Run all commands from the repo root (workspace `just`).
 
 ## Dependencies
 
 ```toml
 [lib]
-crate-type = ["cdylib"]  # Loadable extension
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-libc = "0.2"
-sqlite3ext-sys = "0.0.1"
-sudachi-search = { git = "https://github.com/jurmarcus/sudachi-search" }
-
-[profile.release]
-panic = "abort"  # Required for FFI
+libc.workspace = true
+sqlite-loadable.workspace = true
+sudachi.workspace = true
+sudachi-search.workspace = true
 ```
+
+Note: `sqlite-loadable` re-exports all needed FTS5 types — no need for `sqlite3ext-sys` separately.
 
 ## SQLite Error Codes
 
@@ -217,4 +190,4 @@ const FTS5_TOKEN_COLOCATED: c_int = 0x0001;
 |-------|-------|-----|
 | Extension won't load | Missing symbol | Check `#[no_mangle]` on entry point |
 | No results | Dictionary not loaded | Check SUDACHI_DICT_PATH |
-| Panic on Japanese text | UTF-8 handling | Invalid UTF-8 returns SQLITE_OK |
+| Panic on bad input | UTF-8 handling | Invalid UTF-8 returns SQLITE_OK |

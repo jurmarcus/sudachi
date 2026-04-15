@@ -1,20 +1,22 @@
 # justfile - sudachi monorepo
 # https://github.com/jurmarcus/sudachi
+#
+# Workspace crates (sudachi-search, sudachi-sqlite) use plain cargo.
+# Excluded crates have their own justfiles:
+#   crates/sudachi-wasm/   — wasm-pack build (just wasm <recipe>)
+#   crates/sudachi-postgres/ — pgrx (use pgrx-* recipes below)
 
 default:
     @just --list
 
 # ============================================================================
-# Crate modules
+# Wasm module (wasm-pack, excluded from workspace)
 # ============================================================================
 
-mod search 'crates/sudachi-search'
-mod tantivy 'crates/sudachi-tantivy'
-mod sqlite 'crates/sudachi-sqlite'
 mod wasm 'crates/sudachi-wasm'
 
 # ============================================================================
-# Workspace builds (excludes pgrx)
+# Workspace builds
 # ============================================================================
 
 # Build all workspace crates (release)
@@ -33,11 +35,11 @@ check:
 # Testing
 # ============================================================================
 
-# Run all workspace tests
+# Run all workspace tests (unit tests, no dictionary required)
 test:
     cargo test
 
-# Run tests with output
+# Run workspace tests with output
 test-verbose:
     cargo test -- --nocapture
 
@@ -57,37 +59,51 @@ lint:
 fix: fmt lint
 
 # ============================================================================
-# Dictionary setup (shared across crates)
+# CI
+# ============================================================================
+
+# Full CI pass: fmt check + clippy + tests
+ci:
+    cargo fmt --all --check
+    cargo clippy --all -- -D warnings
+    cargo test
+
+# ============================================================================
+# Dictionary setup (shared across workspace crates)
 # ============================================================================
 
 export SUDACHI_DICT_PATH := env_var_or_default("SUDACHI_DICT_PATH", `find ~/.sudachi -name "system_full.dic" 2>/dev/null | head -1 || find ~/.sudachi -name "system_small.dic" 2>/dev/null | head -1 || echo ""`)
 
-# Download and install Sudachi dictionary
+# Download and install Sudachi dictionary to ~/.sudachi/
 dict-setup:
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p ~/.sudachi
-    if [ ! -d ~/.sudachi/sudachi-dictionary-* ]; then
+    if [ ! -f ~/.sudachi/system_full.dic ]; then
         echo "Downloading Sudachi dictionary..."
         curl -L https://github.com/WorksApplications/SudachiDict/releases/download/v20251022/sudachi-dictionary-20251022-full.zip -o /tmp/sudachi-dict.zip
-        unzip -o /tmp/sudachi-dict.zip -d ~/.sudachi/
-        rm /tmp/sudachi-dict.zip
+        unzip -o /tmp/sudachi-dict.zip -d /tmp/sudachi-temp/
+        cp /tmp/sudachi-temp/*/system_full.dic ~/.sudachi/
+        cp /tmp/sudachi-temp/*/char.def ~/.sudachi/ 2>/dev/null || true
+        cp /tmp/sudachi-temp/*/rewrite.def ~/.sudachi/ 2>/dev/null || true
+        cp /tmp/sudachi-temp/*/unk.def ~/.sudachi/ 2>/dev/null || true
+        rm -rf /tmp/sudachi-temp /tmp/sudachi-dict.zip
         echo "Dictionary installed to ~/.sudachi/"
     else
-        echo "Dictionary already exists"
+        echo "Dictionary already exists at ~/.sudachi/"
     fi
 
-# Show dictionary path
+# Show resolved dictionary path
 dict-path:
     @echo "SUDACHI_DICT_PATH: ${SUDACHI_DICT_PATH:-not found}"
 
 # ============================================================================
-# pgrx (own nested workspace - run from crates/sudachi-postgres/)
+# pgrx (own nested workspace — cargo pgrx required)
 # ============================================================================
 
-# Build sudachi-postgres (pgrx)
+# Build sudachi-postgres via pgrx (requires: cargo install cargo-pgrx && cargo pgrx init)
 pgrx-build:
-    cargo build --release --manifest-path crates/sudachi-postgres/Cargo.toml
+    cargo pgrx build --manifest-path crates/sudachi-postgres/Cargo.toml
 
 # Check sudachi-postgres
 pgrx-check:
@@ -103,12 +119,9 @@ env:
     @echo "PWD: $(pwd)"
     @cargo --version
     @rustc --version
+    @wasm-pack --version 2>/dev/null || echo "wasm-pack: not installed"
 
 # Clean all build artifacts
 clean:
     cargo clean
-    rm -rf crates/sudachi-wasm/pkg/
-
-# Watch workspace for changes
-watch:
-    cargo watch -x check
+    rm -rf crates/sudachi-wasm/wasm/pkg/

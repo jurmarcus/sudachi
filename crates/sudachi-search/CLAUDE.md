@@ -4,7 +4,7 @@ B+C multi-granularity Japanese tokenization for search engines.
 
 ## What This Is
 
-The core library that solves Japanese compound word search. Search-engine agnostic - provides `SearchToken` with `is_colocated` flag that adapter crates translate for each engine.
+The core library that solves Japanese compound word search. Search-engine agnostic — provides `SearchToken` with `is_colocated` flag that adapter crates translate for each engine.
 
 ## The Problem Being Solved
 
@@ -47,16 +47,18 @@ B+C (this crate):
 │      ├── { surface: "都立", is_colocated: true }                            │
 │      └── { surface: "大学", is_colocated: true }                            │
 │                                                                              │
-└───────────────────────────────────────────────────────────────────────────────┘
-                │                     │                     │
-                ▼                     ▼                     ▼
-┌───────────────────────┐ ┌───────────────────────┐ ┌───────────────────────┐
-│   sudachi-tantivy     │ │   sudachi-sqlite      │ │   sudachi-postgres    │
-│                       │ │                       │ │                       │
-│ is_colocated →        │ │ is_colocated →        │ │ Uses sudachi-tantivy  │
-│ position_inc=0        │ │ FTS5_TOKEN_COLOCATED  │ │ for ParadeDB          │
-└───────────────────────┘ └───────────────────────┘ └───────────────────────┘
+└─────────────────────────────────────────────────────────────────────────────┘
+                │                     │
+                ▼                     ▼
+┌───────────────────────┐ ┌───────────────────────┐
+│   sudachi-sqlite      │ │   sudachi-postgres    │
+│                       │ │                       │
+│ is_colocated →        │ │ (pgrx, own workspace) │
+│ FTS5_TOKEN_COLOCATED  │ │                       │
+└───────────────────────┘ └───────────────────────┘
 ```
+
+Note: `sudachi-tantivy` is a stub — not yet functional.
 
 ## Key Data Structures
 
@@ -80,42 +82,17 @@ pub struct CompoundWord {
     pub byte_start: usize,
     pub byte_end: usize,
 }
-
-impl CompoundWord {
-    pub fn is_compound(&self) -> bool;      // components.len() > 1
-    pub fn component_count(&self) -> usize; // Number of parts
-}
 ```
 
 ## API
 
 ```rust
 impl SearchTokenizer {
-    // Construction
     pub fn new(dictionary: Arc<JapaneseDictionary>) -> Self;
-    pub fn from_tokenizer(tokenizer: StatelessTokenizer<...>) -> Self;
-
-    // Configuration
-    pub fn with_surface_form(self) -> Self;           // Disable normalization
-    pub fn with_normalized_form(self, bool) -> Self;  // Configure normalization
-    pub fn uses_normalized_form(&self) -> bool;       // Check current setting
-
-    // Core tokenization
+    pub fn with_surface_form(self) -> Self;
     pub fn tokenize(&self, input: &str) -> Result<Vec<SearchToken>, SearchError>;
-    pub fn tokenize_with_normalization(&self, input: &str, normalize: bool)
-        -> Result<Vec<SearchToken>, SearchError>;
-
-    // Compound detection
     pub fn detect_compounds(&self, input: &str) -> Result<Vec<CompoundWord>, SearchError>;
-    pub fn tokenize_with_compounds(&self, input: &str)
-        -> Result<(Vec<SearchToken>, Vec<CompoundWord>), SearchError>;
-
-    // Internal access
-    pub fn inner(&self) -> &StatelessTokenizer<Arc<JapaneseDictionary>>;
 }
-
-// Extract compounds without re-tokenizing
-pub fn extract_compounds(tokens: &[SearchToken]) -> Vec<CompoundWord>;
 ```
 
 ## Critical Implementation Rules
@@ -125,15 +102,11 @@ pub fn extract_compounds(tokens: &[SearchToken]) -> Vec<CompoundWord>;
 ```rust
 // 1. Mode C token → is_colocated: false (NEW position)
 // 2. Mode B sub-tokens within C span → is_colocated: true (SAME position)
-// 3. Only emit B tokens that DIFFER from C text
+// 3. Only emit B tokens that DIFFER from C text (no duplicates)
 
-// CORRECT:
 if b_text != &text_c {
     result.push(SearchToken { is_colocated: true, .. });
 }
-
-// WRONG: emitting duplicate
-result.push(SearchToken { is_colocated: true, .. }); // Even if same text!
 ```
 
 ### Normalization
@@ -145,41 +118,31 @@ Default is normalized (better recall):
 | 食べた | 食べる | Conjugation |
 | 美しかった | 美しい | Inflection |
 | 附属 | 付属 | Variant kanji |
-| ＳＵＭＭＥＲ | サマー | Fullwidth |
 
-### Byte Offsets
+## Dependencies
 
-Sudachi returns byte offsets directly:
+```toml
+[dependencies]
+sudachi.workspace = true
+```
 
-```rust
-// NO conversion needed - already bytes
-pub byte_start: usize,  // m.begin()
-pub byte_end: usize,    // m.end()
+The upstream `sudachi` dep is pinned to a specific rev in the root workspace:
+
+```toml
+[workspace.dependencies]
+sudachi = { git = "https://github.com/WorksApplications/sudachi.rs", rev = "b568decbbd4ea209dec847821dc1f5069a0f2ff5" }
 ```
 
 ## Commands
 
 ```bash
-# Setup dictionary (one-time)
-just dict-setup
-
-# Build
-just build
-
-# Test (unit tests, no dictionary)
-just test
-
-# Test (all tests, requires dictionary)
-just test-all
-
-# Format and lint
-just fix
-
-# Show environment
-just env
+just build        # Build (from repo root)
+just test         # Unit tests — no dictionary required
+just fix          # Format and lint
+just dict-setup   # Download dictionary
 ```
 
-All commands use `just` (task runner). Run `just --list` to see all available commands.
+Run all commands from the repo root (workspace `just`).
 
 ## File Structure
 
@@ -190,19 +153,12 @@ src/
 
 Single-file library, ~750 LOC.
 
-## Dependencies
-
-```toml
-[dependencies]
-sudachi = { git = "https://github.com/WorksApplications/sudachi.rs", branch = "develop" }
-```
-
 ## Testing
 
 ### Unit Tests (No Dictionary)
 
 ```bash
-cargo test
+cargo test -p sudachi-search
 ```
 
 Tests `SearchToken` equality, `CompoundWord` methods, `extract_compounds()`.
@@ -210,22 +166,5 @@ Tests `SearchToken` equality, `CompoundWord` methods, `extract_compounds()`.
 ### Integration Tests (Requires Dictionary)
 
 ```bash
-SUDACHI_DICT_PATH=/path/to/system.dic cargo test -- --ignored
+SUDACHI_DICT_PATH=~/.sudachi/system_full.dic cargo test -p sudachi-search -- --include-ignored
 ```
-
-Tests actual tokenization.
-
-## Downstream Adapters
-
-| Crate | Translation |
-|-------|-------------|
-| sudachi-tantivy | `is_colocated` → position stays same |
-| sudachi-sqlite | `is_colocated` → `FTS5_TOKEN_COLOCATED` |
-| sudachi-postgres | Via sudachi-tantivy |
-
-## Why This Exists Separately
-
-- **Sudachi's modes** = linguistic granularity (how to analyze)
-- **B+C** = search output format (emitting multiple granularities)
-
-Orthogonal concerns. This crate bridges them for search use cases.

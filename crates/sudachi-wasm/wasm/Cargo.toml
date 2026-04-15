@@ -1,13 +1,14 @@
 [package]
-name = "sudachi"
-version = "1.0.2"
-authors = ["Benjas333 <seston30+npm@gmail.com>"]
+name = "sudachi-wasm"
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.74.1"
-description = "Modern WebAssembly distribution of sudachi.rs"
+description = "WebAssembly distribution of sudachi.rs for browser and Node.js"
 readme = "README.md"
 repository = "https://github.com/jurmarcus/sudachi"
-license = "Apache-2.0"
+license = "MIT"
+# Upstream: https://github.com/Benjas333/sudachi-wasm333
+# Not published — built via wasm-pack, not cargo publish
 
 [dependencies] # this should be sorted
 aho-corasick = "1" # MIT/Apache 2.0

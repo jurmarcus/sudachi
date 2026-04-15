@@ -1,33 +1,43 @@
 # sudachi monorepo
 
-Japanese morphological analysis ecosystem — Sudachi tokenizers for PostgreSQL, SQLite, Tantivy, and WASM.
+Japanese morphological analysis ecosystem — Sudachi tokenizers for SQLite, PostgreSQL, Tantivy, and WASM.
 
 ## Structure
 
 ```
 crates/
 ├── sudachi-search/    # Core: B+C multi-granularity tokenization (search-engine agnostic)
-├── sudachi-tantivy/   # Adapter: SearchToken → Tantivy position stream
 ├── sudachi-sqlite/    # Adapter: SearchToken → SQLite FTS5 colocated tokens
-├── sudachi-wasm/      # WASM: sudachi.rs compiled for browser/Node.js
-└── sudachi-postgres/  # pgrx: ParadeDB fork + Sudachi (own nested workspace)
+├── sudachi-tantivy/   # Adapter stub: SearchToken → Tantivy (not yet implemented)
+├── sudachi-wasm/      # WASM: sudachi.rs compiled for browser/Node.js (excluded from workspace)
+└── sudachi-postgres/  # pgrx: ParadeDB fork + Sudachi (excluded from workspace, own nested workspace)
 ```
+
+## Workspace
+
+The **root workspace** includes only `crates/sudachi-search` and `crates/sudachi-sqlite`.
+
+Excluded crates:
+- `crates/sudachi-tantivy/` — stub, excluded until tantivy dependency is added
+- `crates/sudachi-wasm/` — built with wasm-pack, not standard cargo
+- `crates/sudachi-postgres/` — pgrx requires its own nested workspace, incompatible with root
 
 ## Commands
 
 ```bash
 just              # List all commands
-just build        # Build workspace crates
+just build        # Build workspace crates (release)
 just test         # Run workspace tests
 just fix          # Format + lint
-just dict-setup   # Install Sudachi dictionary (~400MB)
-just dict-path    # Show dictionary path
+just ci           # Full CI: fmt check + clippy + tests
 
-just search build # Build sudachi-search only
-just sqlite build # Build sudachi-sqlite only
-just wasm build   # Build WASM (wasm-pack)
+just wasm build   # Build WASM (wasm-pack, browser ES module)
+just wasm dict-setup  # Install WASM dict resources
 
-just pgrx-build   # Build sudachi-postgres (pgrx)
+just dict-setup   # Install Sudachi dictionary to ~/.sudachi/
+just dict-path    # Show resolved dictionary path
+
+just pgrx-build   # Build sudachi-postgres (requires cargo-pgrx)
 ```
 
 ## Dictionary
@@ -38,13 +48,7 @@ Required at runtime. Auto-discovered from `~/.sudachi/system_full.dic`:
 just dict-setup
 ```
 
-Or set `SUDACHI_DICT_PATH=/path/to/system.dic` explicitly.
-
-## Workspace
-
-Root workspace includes `crates/sudachi-{search,tantivy,sqlite,wasm}`.
-
-`crates/sudachi-postgres/` is **excluded** — it has its own nested pgrx workspace and must be built separately via `just pgrx-build` or `cargo build --manifest-path crates/sudachi-postgres/Cargo.toml`.
+Or set `SUDACHI_DICT_PATH=/path/to/system_full.dic` explicitly.
 
 ## Version Control
 
