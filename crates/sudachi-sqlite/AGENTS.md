@@ -242,15 +242,17 @@ sqlite3 -cmd ".load ./libsudachi_sqlite sudachi_fts5_tokenizer_init" test.db
 
 ```toml
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]  # rlib required for cargo test
 
 [dependencies]
-libc = "0.2"
+libc.workspace = true
 sqlite3ext-sys = "0.0.1"
-sudachi-search = { git = "https://github.com/jurmarcus/sudachi-search" }
+sqlite-loadable.workspace = true
+sudachi-search = { path = "../sudachi-search" }
+sudachi.workspace = true
 
-[profile.release]
-panic = "abort"
+# CRITICAL: Do NOT add panic = "abort"
+# It disables catch_unwind, breaking ffi_panic_boundary safety
 ```
 
 ## SQLite Constants

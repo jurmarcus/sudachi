@@ -87,7 +87,7 @@ Now searches for "大学", "東京", or "東京都立大学" all match.
 
 ```toml
 [dependencies]
-sudachi-search = { git = "https://github.com/jurmarcus/sudachi-search" }
+sudachi-search = { git = "https://github.com/jurmarcus/sudachi" }
 ```
 
 ### Dictionary Setup
@@ -352,10 +352,10 @@ pub fn extract_compounds(tokens: &[SearchToken]) -> Vec<CompoundWord>;
 
 | Platform | Adapter | Repository |
 |----------|---------|------------|
-| **Tantivy** | sudachi-tantivy | [github.com/jurmarcus/sudachi-tantivy](https://github.com/jurmarcus/sudachi-tantivy) |
-| **SQLite FTS5** | sudachi-sqlite | [github.com/jurmarcus/sudachi-sqlite](https://github.com/jurmarcus/sudachi-sqlite) |
-| **PostgreSQL** | sudachi-postgres | [github.com/jurmarcus/sudachi-postgres](https://github.com/jurmarcus/sudachi-postgres) |
-| **WebAssembly** | sudachi-wasm | [github.com/jurmarcus/sudachi-wasm](https://github.com/jurmarcus/sudachi-wasm) |
+| **Tantivy** | sudachi-tantivy | [`crates/sudachi-tantivy`](../sudachi-tantivy/) in this repo |
+| **SQLite FTS5** | sudachi-sqlite | [`crates/sudachi-sqlite`](../sudachi-sqlite/) in this repo |
+| **PostgreSQL** | sudachi-postgres | [jurmarcus/paradedb](https://github.com/jurmarcus/paradedb) |
+| **WebAssembly** | sudachi-wasm | [`crates/sudachi-wasm`](../sudachi-wasm/) in this repo |
 
 ---
 

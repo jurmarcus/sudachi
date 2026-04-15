@@ -88,18 +88,16 @@ Now searches for "大学", "東京", or "東京都立大学" all match.
 ### Build and Install
 
 ```bash
-# Clone
-git clone https://github.com/jurmarcus/sudachi-sqlite.git
-cd sudachi-sqlite
+# Clone the monorepo
+git clone https://github.com/jurmarcus/sudachi.git
+cd sudachi
 
 # Setup dictionary and build (using just)
 just dict-setup
 just build
-just install   # Installs to ~/.local/lib/
 
-# Or manually
-cargo build --release
-cp target/release/libsudachi_sqlite.dylib ~/.local/lib/
+# Or build the extension directly
+cargo build -p sudachi-sqlite --release
 ```
 
 The dictionary is auto-discovered from `~/.sudachi/` - no environment variable needed.
@@ -337,10 +335,10 @@ console.log(rows);
 
 | Project | Description |
 |---------|-------------|
-| [sudachi-search](https://github.com/jurmarcus/sudachi-search) | B+C core (upstream) |
-| [sudachi-tantivy](https://github.com/jurmarcus/sudachi-tantivy) | Tantivy integration |
-| [sudachi-postgres](https://github.com/jurmarcus/sudachi-postgres) | PostgreSQL (ParadeDB) |
-| [sudachi-wasm](https://github.com/jurmarcus/sudachi-wasm) | WebAssembly |
+| [`sudachi-search`](../sudachi-search/) | B+C core (this monorepo) |
+| [`sudachi-tantivy`](../sudachi-tantivy/) | Tantivy integration (this monorepo) |
+| [jurmarcus/paradedb](https://github.com/jurmarcus/paradedb) | PostgreSQL (ParadeDB fork) |
+| [`sudachi-wasm`](../sudachi-wasm/) | WebAssembly (this monorepo) |
 | [sudachi.rs](https://github.com/WorksApplications/sudachi.rs) | Upstream analyzer |
 
 ---

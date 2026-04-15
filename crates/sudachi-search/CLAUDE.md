@@ -58,7 +58,7 @@ B+C (this crate):
 └───────────────────────┘ └───────────────────────┘
 ```
 
-Note: `sudachi-tantivy` is a stub — not yet functional.
+Note: `sudachi-tantivy` is a workspace member; paradedb pulls it as a git dep.
 
 ## Key Data Structures
 

@@ -1,249 +1,114 @@
-# CLAUDE.md - sudachi-postgres
+# CLAUDE.md — sudachi-postgres
 
-A ParadeDB fork with Sudachi Japanese tokenizer integration for PostgreSQL full-text search.
+Docker infrastructure for running ParadeDB with the Sudachi Japanese tokenizer.
 
-## Why This Exists
+## What This Is
 
-Japanese full-text search has a fundamental problem: **compound words**.
+This directory contains ONLY Docker infrastructure. The Rust source lives at:
 
-```
-Document: "東京都立大学で研究しています"
-         (I'm doing research at Tokyo Metropolitan University)
+- **`~/CODE/paradedb`** — `jurmarcus/paradedb` fork with Sudachi integration
 
-Traditional tokenizer (Mode C): ["東京都立大学", "で", "研究", "し", "て", "い", "ます"]
-Search query: "大学"
-
-Result: NO MATCH - "大学" is trapped inside "東京都立大学"
-```
-
-This fork adds **Sudachi with B+C multi-granularity** - the gold standard for Japanese search:
+## Structure
 
 ```
-Sudachi Search mode:
-  pos 0: "東京都立大学" (compound)
-  pos 0: "東京" (sub-token)     ← SAME position!
-  pos 0: "都立" (sub-token)     ← SAME position!
-  pos 0: "大学" (sub-token)     ← SAME position!
-  pos 1: "で"
-  pos 2: "研究"
-  ...
-
-Search query: "大学"
-Result: MATCH! Both exact and partial matching work.
+docker/
+├── Dockerfile             Clones jurmarcus/paradedb from GitHub, builds pg_search
+├── bootstrap.sh           Postgres init: CREATE EXTENSION pg_search, set search_path
+├── docker-compose.yml     Production compose
+├── docker-compose.dev.yml Dev compose
+├── Dockerfile.config      Config image
+├── manifests/             Kubernetes manifests
+└── pg_search--0.20.6.sql  Pre-generated SQL schema (bypasses pgrx package UTF-8 bug)
 ```
 
-## Architecture
+## Dockerfile Design
 
+The Dockerfile clones `jurmarcus/paradedb` from GitHub rather than copying local source.
+This eliminates sibling-COPY hacks that were needed when tokenizers used path deps.
+
+```dockerfile
+# Clean: git clone from GitHub
+RUN git clone --depth 1 https://github.com/jurmarcus/paradedb /workspace
+
+# No more COPY sudachi-tantivy/ or COPY sudachi-search/ tricks needed
+# Cargo resolves the git dep automatically
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           sudachi-postgres                                   │
-│                      (ParadeDB fork + Sudachi)                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  pg_search/src/api/tokenizers/                                              │
-│  ├── definitions.rs    ← define_tokenizer_type!(Sudachi, ...)              │
-│  ├── mod.rs            ← SearchTokenizer::Sudachi case handling            │
-│  └── typmod/           ← SudachiTypmod (mode, normalized options)          │
-│                                                                              │
-│  tokenizers/src/                                                            │
-│  ├── sudachi.rs        ← SudachiTokenizer wrapper                          │
-│  └── manager.rs        ← SearchTokenizer::Sudachi variant                  │
-│                                                                              │
-└────────────────────────────────────────┬────────────────────────────────────┘
-                                         │
-┌────────────────────────────────────────▼────────────────────────────────────┐
-│                         sudachi-tantivy                                      │
-│                    (Tantivy tokenizer adapter)                              │
-│                                                                              │
-│  SplitMode::Search → uses SearchTokenizer from sudachi-search              │
-│  is_colocated: true → position stays same for sub-tokens                   │
-└────────────────────────────────────────┬────────────────────────────────────┘
-                                         │
-┌────────────────────────────────────────▼────────────────────────────────────┐
-│                          sudachi-search                                      │
-│                   (B+C multi-granularity core)                              │
-│                                                                              │
-│  1. Tokenize with Mode C (compounds)                                        │
-│  2. Tokenize with Mode B (sub-tokens)                                       │
-│  3. Emit both, marking sub-tokens as is_colocated: true                    │
-└────────────────────────────────────────┬────────────────────────────────────┘
-                                         │
-┌────────────────────────────────────────▼────────────────────────────────────┐
-│                            sudachi.rs                                        │
-│               (WorksApplications morphological analyzer)                    │
-│                                                                              │
-│  - High-quality dictionary with 1M+ entries                                │
-│  - Three base modes: A (finest), B (medium), C (coarsest)                  │
-│  - Normalized forms for better recall                                       │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+
+Build context: `crates/sudachi-postgres/docker/`
 
 ## Commands
 
 ```bash
-# Setup dictionary (one-time)
-just dict-setup
+# From monorepo root — builds pg_search locally
+just pgrx-build   # cd ~/CODE/paradedb && cargo pgrx build -p pg_search --features icu,sudachi
+just pgrx-check   # cd ~/CODE/paradedb && cargo check -p pg_search --features icu,sudachi
 
-# Install prerequisites
-just install-deps
-
-# Build pg_search with Sudachi
-just build
-
-# Install extension to PostgreSQL
-just install
-
-# Start PostgreSQL
-just pg-start
-
-# Run tests
-just test
-
-# Interactive SQL test
-just test-sql
-
-# Full setup from scratch
-just setup
-
-# Show environment
-just env
+# Docker
+cd crates/sudachi-postgres/docker
+docker compose up
 ```
 
-All commands use `just` (task runner). Run `just --list` to see all available commands.
-
-The dictionary is auto-discovered from `~/.sudachi/` - no environment variable needed.
-
-### Prerequisites
+## Docker Build
 
 ```bash
-# Install PostgreSQL 17
-brew install postgresql@17
-
-# Install cargo-pgrx and initialize
-just install-deps
+cd crates/sudachi-postgres/docker
+docker build \
+  --build-arg PG_SEARCH_FEATURES="icu,sudachi" \
+  -t paradedb-sudachi .
 ```
 
-### Test
+With Sudachi enabled, the Dockerfile will:
+1. Clone `jurmarcus/paradedb`
+2. Download the Sudachi dictionary
+3. Build `pg_search --features icu,sudachi`
+4. Install `.so` + `.control` + pre-generated `.sql`
+5. Set `SUDACHI_DICT_PATH` for runtime
+
+## SQL Interface
 
 ```sql
--- Create extension
-CREATE EXTENSION pg_search;
-
--- Create test table
-CREATE TABLE documents (id SERIAL PRIMARY KEY, content TEXT);
-INSERT INTO documents (content) VALUES
-    ('東京都立大学は東京にある公立大学です'),
-    ('大学院で研究しています'),
-    ('私は大学で日本語を勉強しました');
-
--- Create index with Sudachi tokenizer
+-- Create BM25 index with Sudachi
 CREATE INDEX docs_idx ON documents
 USING bm25(id, (content::pdb.sudachi))
 WITH (key_field='id');
 
--- Search for 大学 - finds ALL documents!
+-- Search mode (B+C, default)
 SELECT * FROM documents WHERE id @@@ 'content:大学';
+
+-- Explicit modes
+content::pdb.sudachi          -- Search (default)
+content::pdb.sudachi('search') -- explicit
+content::pdb.sudachi('c')     -- Mode C (longest)
+content::pdb.sudachi('a')     -- Mode A (finest)
 ```
 
-## SQL Interface
+## Environment Variables
 
-### Basic Usage
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `SUDACHI_DICT_PATH` | Yes (Postgres process) | Path to `system_full.dic` |
 
-```sql
--- Default: Search mode (B+C), normalized=true
-CREATE INDEX idx ON tbl USING bm25(id, (content::pdb.sudachi)) WITH (key_field='id');
+The Dockerfile sets `SUDACHI_DICT_PATH=/opt/sudachi/sudachi-dictionary-20251022/system_full.dic`
+in the runtime image.
 
--- With explicit mode
-CREATE INDEX idx ON tbl USING bm25(id, (content::pdb.sudachi('search'))) WITH (key_field='id');
-CREATE INDEX idx ON tbl USING bm25(id, (content::pdb.sudachi('c'))) WITH (key_field='id');
-
--- Modes: 'a' (finest), 'b' (medium), 'c' (coarsest), 'search' (B+C, default)
-```
-
-### Features Demonstrated
-
-| Feature | Query | Matches |
-|---------|-------|---------|
-| Compound matching | `大学` | 東京都立大学, 大学院, 大学 |
-| Exact phrase | `東京都立大学` | Only 東京都立大学 |
-| Conjugation normalization | `食べる` | 食べた, 食べます, 食べている |
-| Adjective inflection | `美しい` | 美しく, 美しかった, 美しさ |
-
-## Key Files
-
-### pg_search Integration
-
-| File | Purpose |
-|------|---------|
-| `pg_search/Cargo.toml` | `sudachi` feature flag |
-| `pg_search/src/api/tokenizers/definitions.rs` | `define_tokenizer_type!(Sudachi, ...)` |
-| `pg_search/src/api/tokenizers/mod.rs` | `SearchTokenizer::Sudachi` handling |
-| `pg_search/src/api/tokenizers/typmod/definitions.rs` | `SudachiTypmod` struct |
-
-### tokenizers Crate
-
-| File | Purpose |
-|------|---------|
-| `tokenizers/Cargo.toml` | `sudachi` feature, sudachi-tantivy dep |
-| `tokenizers/src/sudachi.rs` | `SudachiTokenizer`, `SudachiMode` |
-| `tokenizers/src/manager.rs` | `SearchTokenizer::Sudachi` variant |
-
-## Debugging
-
-### Check Tokenizer is Available
-
-```sql
-SELECT typname FROM pg_type
-WHERE typnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'pdb')
-AND typname = 'sudachi';
-```
-
-### Dictionary Not Found
-
-If searches return empty results, ensure `SUDACHI_DICT_PATH` is set for the PostgreSQL server process:
+## Updating ParadeDB Upstream
 
 ```bash
-# Restart with dictionary path
-SUDACHI_DICT_PATH=/path/to/system.dic pg_ctl -D /path/to/data restart
+cd ~/CODE/paradedb
+gh repo sync --source paradedb/paradedb   # Pull upstream changes
+# Apply any conflicts in tokenizers/src/manager.rs manually
+sl commit -m "chore: sync upstream paradedb"
+sl push --to main
 ```
 
-### Test Tokenization Manually
+The Dockerfile always clones `--depth 1` from main, so a push is all that's needed.
 
-```bash
-# In Rust test
-SUDACHI_DICT_PATH=/path/to/system.dic cargo test --features sudachi -p tokenizers
+## Key Dependency Chain
+
 ```
-
-## Dependencies
-
-```toml
-# tokenizers/Cargo.toml
-[dependencies]
-sudachi-tantivy = { path = "../sudachi-tantivy", optional = true }
-
-[features]
-sudachi = ["sudachi-tantivy"]
+pg_search (pgrx extension)
+  └── tokenizers --features sudachi
+        └── sudachi-tantivy = { git = "https://github.com/jurmarcus/sudachi" }
+              └── sudachi-search (path dep in sudachi monorepo)
+                    └── sudachi.rs (upstream morphological analyzer)
 ```
-
-## Comparison with Lindera
-
-ParadeDB includes Lindera for Japanese tokenization. Here's why Sudachi is better for search:
-
-| Feature | Sudachi | Lindera |
-|---------|---------|---------|
-| B+C multi-granularity | Yes (Search mode) | No |
-| Compound detection | Superior (dictionary-based) | Basic |
-| Normalized forms | Yes | No |
-| Conjugation handling | Better | Good |
-| Dictionary quality | 1M+ entries | 400K entries |
-| Memory usage | Higher (~70MB) | Lower (~30MB) |
-
-**Recommendation**: Use Sudachi for Japanese full-text search. Use Lindera for simpler use cases or lower memory environments.
-
-## Related Crates
-
-| Crate | Purpose | Location |
-|-------|---------|----------|
-| sudachi-search | B+C multi-granularity core | ~/CODE/sudachi-search |
-| sudachi-tantivy | Tantivy adapter | ~/CODE/sudachi-tantivy |
-| sudachi.rs | Upstream morphological analyzer | GitHub (develop branch) |
