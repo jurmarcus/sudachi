@@ -4,10 +4,14 @@ members = [
     "crates/sudachi-search",
     "crates/sudachi-tantivy",
     "crates/sudachi-sqlite",
+]
+# Excluded from root workspace:
+# - sudachi-postgres: pgrx extension with its own nested workspace
+# - sudachi-wasm: wasm-pack build, not standard cargo; resource paths assume outer wrapper layout
+exclude = [
+    "crates/sudachi-postgres",
     "crates/sudachi-wasm",
 ]
-# pgrx has its own nested workspace — excluded from root to avoid resolver conflicts
-exclude = ["crates/sudachi-postgres"]
 
 [workspace.package]
 version = "0.1.0"
