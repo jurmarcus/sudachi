@@ -580,6 +580,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sudachi-tantivy"
+version = "0.1.0"
+dependencies = [
+ "sudachi",
+ "sudachi-search",
+ "tantivy-tokenizer-api",
+]
+
+[[package]]
 name = "syn"
 version = "1.0.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -599,6 +608,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "tantivy-tokenizer-api"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23024f6aeb25ceb1a0e27740c84bdb0fae52626737b7e9a9de6ad5aa25c7b038"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

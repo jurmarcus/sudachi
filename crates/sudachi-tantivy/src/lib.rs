@@ -25,4 +25,4 @@ pub mod stream;
 pub mod tokenizer;
 
 pub use stream::SudachiTokenStream;
-pub use tokenizer::{SudachiError, SudachiTokenizer, SplitMode, TokenData};
+pub use tokenizer::{SplitMode, SudachiError, SudachiTokenizer, TokenData};

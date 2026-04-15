@@ -3,8 +3,8 @@
 use std::sync::Arc;
 use tantivy_tokenizer_api::{Token, Tokenizer};
 
-use sudachi::analysis::stateless_tokenizer::StatelessTokenizer;
 use sudachi::analysis::Tokenize;
+use sudachi::analysis::stateless_tokenizer::StatelessTokenizer;
 use sudachi::config::Config;
 use sudachi::dic::dictionary::JapaneseDictionary;
 use sudachi::dic::storage::{Storage, SudachiDicData};
@@ -124,10 +124,10 @@ impl SudachiTokenizer {
         let resource_dir = dict_path.parent().unwrap_or(std::path::Path::new("."));
         let config = Config::minimal_at(resource_dir);
 
-        let dictionary =
-            JapaneseDictionary::from_cfg_storage_with_embedded_chardef(&config, storage).map_err(
-                |e| SudachiError::DictionaryLoad(format!("Failed to load dictionary: {}", e)),
-            )?;
+        let dictionary = JapaneseDictionary::from_cfg_storage_with_embedded_chardef(
+            &config, storage,
+        )
+        .map_err(|e| SudachiError::DictionaryLoad(format!("Failed to load dictionary: {}", e)))?;
 
         let dictionary = Arc::new(dictionary);
 
