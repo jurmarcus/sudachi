@@ -28,6 +28,11 @@ wasm-build-bundler:
 wasm-build-dev:
     wasm-pack build --dev --target web crates/sudachi-wasm
 
+# Serve the browser demo (requires wasm-build first)
+wasm-serve:
+    @echo "Open http://localhost:3000/example/ — load a .dic file or enter a URL"
+    cd crates/sudachi-wasm && bunx http-server . -p 3000 --cors
+
 # ============================================================================
 # Workspace builds
 # ============================================================================

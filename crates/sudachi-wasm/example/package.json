@@ -1,0 +1,11 @@
+{
+  "name": "sudachi-wasm-example",
+  "version": "0.1.0",
+  "description": "Browser demo for sudachi-wasm",
+  "scripts": {
+    "start": "bunx http-server . -p 3000 --cors"
+  },
+  "devDependencies": {
+    "http-server": "^14.1.1"
+  }
+}
