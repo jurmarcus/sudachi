@@ -56,9 +56,7 @@ mod extension;
 use libc::{c_char, c_int, c_uchar, c_void};
 use std::sync::Arc;
 
-use sudachi::config::Config;
-use sudachi::dic::dictionary::JapaneseDictionary;
-use sudachi::dic::storage::{Storage, SudachiDicData};
+use sudachi_optimizer::sudachi::{Config, JapaneseDictionary, Storage, SudachiDicData};
 use sudachi_search::SearchTokenizer;
 
 pub use crate::common::*;

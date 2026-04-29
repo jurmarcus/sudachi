@@ -11,5 +11,5 @@ publish = false
 
 [dependencies]
 tantivy-tokenizer-api = "0.6.0"
-sudachi.workspace = true
+sudachi-optimizer.workspace = true
 sudachi-search.workspace = true

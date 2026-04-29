@@ -92,9 +92,11 @@
 
 use std::sync::Arc;
 
-use sudachi::analysis::stateless_tokenizer::StatelessTokenizer;
-use sudachi::analysis::{Mode, Tokenize};
-use sudachi::dic::dictionary::JapaneseDictionary;
+// Reach Sudachi types through sudachi-optimizer's gateway re-export so
+// the optimisation pipeline can apply uniformly across consumers.
+use sudachi_optimizer::sudachi::{
+    JapaneseDictionary, Mode, StatelessTokenizer, Tokenize,
+};
 
 /// Check if a part-of-speech should be filtered out for search purposes.
 ///

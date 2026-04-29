@@ -1,7 +1,5 @@
 use std::sync::Arc;
-use sudachi::config::Config;
-use sudachi::dic::dictionary::JapaneseDictionary;
-use sudachi::dic::storage::{Storage, SudachiDicData};
+use sudachi_optimizer::sudachi::{Config, JapaneseDictionary, Storage, SudachiDicData};
 use sudachi_search::SearchTokenizer;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

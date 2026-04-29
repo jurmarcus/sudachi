@@ -1,0 +1,17 @@
+[package]
+name = "sudachi-optimizer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Token-stream rewriter that fixes known Sudachi mis-tokenisations (compound auxiliaries, colloquial forms, fused particles, etc.)"
+keywords = ["japanese", "tokenizer", "nlp", "sudachi", "post-processing"]
+categories = ["text-processing", "internationalization"]
+
+[lints]
+workspace = true
+
+[dependencies]
+sudachi.workspace = true
+bitflags = "2"
+thiserror = "2"

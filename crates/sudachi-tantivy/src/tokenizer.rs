@@ -3,11 +3,9 @@
 use std::sync::Arc;
 use tantivy_tokenizer_api::{Token, Tokenizer};
 
-use sudachi::analysis::Tokenize;
-use sudachi::analysis::stateless_tokenizer::StatelessTokenizer;
-use sudachi::config::Config;
-use sudachi::dic::dictionary::JapaneseDictionary;
-use sudachi::dic::storage::{Storage, SudachiDicData};
+use sudachi_optimizer::sudachi::{
+    Config, JapaneseDictionary, Mode, StatelessTokenizer, Storage, SudachiDicData, Tokenize,
+};
 use sudachi_search::SearchTokenizer;
 
 use crate::stream::SudachiTokenStream;
@@ -45,11 +43,11 @@ pub enum SplitMode {
 impl SplitMode {
     /// Convert to Sudachi's Mode enum.
     /// Returns None for Search mode (uses SearchTokenizer instead).
-    fn to_sudachi_mode(self) -> Option<sudachi::analysis::Mode> {
+    fn to_sudachi_mode(self) -> Option<Mode> {
         match self {
-            SplitMode::A => Some(sudachi::analysis::Mode::A),
-            SplitMode::B => Some(sudachi::analysis::Mode::B),
-            SplitMode::C => Some(sudachi::analysis::Mode::C),
+            SplitMode::A => Some(Mode::A),
+            SplitMode::B => Some(Mode::B),
+            SplitMode::C => Some(Mode::C),
             SplitMode::Search => None,
         }
     }
@@ -196,7 +194,7 @@ impl Tokenizer for SudachiTokenizer {
                 let sudachi_mode = self
                     .mode
                     .to_sudachi_mode()
-                    .unwrap_or(sudachi::analysis::Mode::C);
+                    .unwrap_or(Mode::C);
                 match tokenizer.tokenize(text, sudachi_mode, false) {
                     Ok(morphemes) => (0..morphemes.len())
                         .map(|i| {
@@ -274,15 +272,15 @@ mod tests {
     fn test_split_mode_conversion() {
         assert_eq!(
             SplitMode::A.to_sudachi_mode(),
-            Some(sudachi::analysis::Mode::A)
+            Some(Mode::A)
         );
         assert_eq!(
             SplitMode::B.to_sudachi_mode(),
-            Some(sudachi::analysis::Mode::B)
+            Some(Mode::B)
         );
         assert_eq!(
             SplitMode::C.to_sudachi_mode(),
-            Some(sudachi::analysis::Mode::C)
+            Some(Mode::C)
         );
         assert_eq!(SplitMode::Search.to_sudachi_mode(), None);
     }

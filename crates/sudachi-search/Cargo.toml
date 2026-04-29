@@ -12,4 +12,7 @@ categories = ["text-processing", "internationalization"]
 workspace = true
 
 [dependencies]
-sudachi.workspace = true
+# Reach Sudachi types through sudachi-optimizer so the optimisation
+# rules can apply uniformly across all consumers. Direct `sudachi`
+# dependency is restricted to sudachi-optimizer.
+sudachi-optimizer.workspace = true

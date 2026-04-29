@@ -20,7 +20,7 @@ workspace = true
 libc.workspace = true
 sqlite-loadable.workspace = true
 sqlite3ext-sys = "0.0.1" # for sqlite3_stmt (not in sqlite-loadable's prelude)
-sudachi.workspace = true
+sudachi-optimizer.workspace = true
 sudachi-search.workspace = true
 
 [features]

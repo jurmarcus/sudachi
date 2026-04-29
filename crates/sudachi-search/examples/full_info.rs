@@ -3,12 +3,10 @@
 //! Usage: SUDACHI_DICT_PATH=~/.sudachi/.../system.dic cargo run --example full_info -- "此処が僕の家。"
 
 use std::sync::Arc;
-use sudachi::analysis::Tokenize;
-use sudachi::analysis::stateless_tokenizer::StatelessTokenizer;
-use sudachi::config::Config;
-use sudachi::dic::dictionary::JapaneseDictionary;
-use sudachi::dic::storage::{Storage, SudachiDicData};
-use sudachi::prelude::Mode;
+use sudachi_optimizer::sudachi::{
+    Config, JapaneseDictionary, Mode, Morpheme, StatelessTokenizer, Storage, SudachiDicData,
+    Tokenize,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input = std::env::args()
@@ -66,7 +64,7 @@ fn print_morphemes(
 
     for (i, m) in morphemes.iter().enumerate() {
         // Get word info - need to specify type for get_word_info
-        let word_info = sudachi::analysis::morpheme::Morpheme::get_word_info(&m);
+        let word_info = Morpheme::get_word_info(&m);
 
         println!();
         println!("┌─────────────────────────────────────────────────────────────────────────────┐");

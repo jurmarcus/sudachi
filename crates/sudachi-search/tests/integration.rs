@@ -4,9 +4,7 @@
 //! Run with: SUDACHI_DICT_PATH=/path/to/system.dic cargo test -- --ignored
 
 use std::sync::Arc;
-use sudachi::config::Config;
-use sudachi::dic::dictionary::JapaneseDictionary;
-use sudachi::dic::storage::{Storage, SudachiDicData};
+use sudachi_optimizer::sudachi::{Config, JapaneseDictionary, Storage, SudachiDicData};
 use sudachi_search::SearchTokenizer;
 
 /// Helper to load the dictionary from SUDACHI_DICT_PATH

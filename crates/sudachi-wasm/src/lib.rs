@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use sudachi::dic::dictionary::JapaneseDictionary;
+use sudachi_optimizer::sudachi::JapaneseDictionary;
 use sudachi_search::{CompoundWord, SearchToken, SearchTokenizer};
 use wasm_bindgen::prelude::*;
 
