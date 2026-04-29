@@ -1,34 +1,47 @@
-//! `CombineInflections` — Combine verb/adjective inflection chains (eat root + ます + か).
+//! `CombineInflections` — Iteratively merge a base inflectable
+//! morpheme (Verb / Adjective / NaAdjective / Auxiliary /
+//! verb-like Suffix) with following morphemes whenever the
+//! deconjugator validates the merged candidate as a real verb /
+//! adjective form.
 //!
-//! **Status:** scaffold (no-op). Body to be ported from
-//! [Sirush/Jiten CombineStages.cs](https://github.com/Sirush/Jiten/blob/master/Jiten.Parser/Stages/CombineStages.cs)
-//! in a follow-up commit. Search the C# source for `CombineInflections` to find
-//! the function definition; corresponding Jiten test cases live under
-//! `Jiten.Tests/Stages/`.
+//! ## Status of port
+//!
+//! **Deferred — needs Jiten's `Deconjugator`.**
+//!
+//! Every merge in this stage is conditional on a deconjugator
+//! lookup proving the candidate is a valid inflected form. Without
+//! the deconjugator we'd either:
+//! - over-merge and produce fake verb forms (hurts downstream
+//!   matching), or
+//! - never merge (no value).
+//!
+//! Until Jiten's `Deconjugator` (16KB + table) is ported into a
+//! sibling crate or into this one, the rule is registered in the
+//! canonical pipeline but is a no-op. The pipeline shape is
+//! preserved so when the deconjugator lands, swapping in the body
+//! is a one-file change.
+//!
+//! Original C# at
+//! [Sirush/Jiten CombineStages.cs `CombineInflections`](https://github.com/Sirush/Jiten/blob/master/Jiten.Parser/Stages/MorphologicalAnalyser.CombineStages.cs)
+//! (~300 lines). Each merge candidate calls
+//! `deconjugator.Deconjugate(candidate_hiragana)` and checks the
+//! returned `DeconjugationForm`s for verb tags / past markers.
+//!
+//! TODO: port Jiten's `Deconjugator` and re-implement this stage.
 
 use crate::lookup::Lexicon;
 use crate::stage::{Phase, Stage};
 use crate::token::Morpheme;
 use crate::token_features::MorphemeFeatures;
 
-/// Stable name used in `Morpheme::applied_rules` and pipeline
-/// diagnostics. Snake-case mirror of the Jiten C# method, prefixed
-/// by phase.
 pub const NAME: &str = "combine_inflections";
 
-/// Construct the [`Stage`] for the canonical pipeline. Wires `NAME`,
-/// the [`Phase::Combine`] phase, and the [`MorphemeFeatures`]
-/// gate.
 pub fn stage() -> Stage {
     Stage::new(NAME, Phase::Combine, MorphemeFeatures::empty(), apply)
 }
 
-/// Apply the stage. Currently a no-op — pipeline returns input
-/// unchanged. Replace with the ported logic in the next pass.
-pub fn apply(
-    morphemes: Vec<Morpheme>,
-    _lexicon: &dyn Lexicon,
-) -> Vec<Morpheme> {
+pub fn apply(morphemes: Vec<Morpheme>, _lexicon: &dyn Lexicon) -> Vec<Morpheme> {
+    // No-op until Deconjugator is ported. See module docs.
     morphemes
 }
 
@@ -38,17 +51,11 @@ mod tests {
     use crate::lookup::EmptyLexicon;
 
     #[test]
-    fn no_op_returns_input_unchanged() {
-        let ms = vec![Morpheme::synthesize(
-            "猫",
-            "ねこ",
-            "猫",
-            vec!["名詞".into()],
-            0..1,
-        )];
-        let out = apply(ms, &EmptyLexicon);
+    fn no_op_until_deconjugator_lands() {
+        let m = Morpheme::synthesize("食べ", "タベ", "食べる", vec!["動詞".into()], 0..2);
+        let out = apply(vec![m.clone()], &EmptyLexicon);
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].surface, "猫");
-        assert!(out[0].applied_rules.is_empty(), "no-op stub must not record rule");
+        assert_eq!(out[0].surface, "食べ");
+        assert!(out[0].applied_rules.is_empty());
     }
 }
