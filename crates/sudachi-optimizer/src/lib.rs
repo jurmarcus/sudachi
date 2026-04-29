@@ -69,6 +69,7 @@
 //! docstring links back to its C# original so future audits can
 //! verify behaviour.
 
+pub mod data;
 pub mod lookup;
 pub mod pipeline;
 pub mod stage;
