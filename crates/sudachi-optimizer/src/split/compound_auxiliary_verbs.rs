@@ -61,9 +61,10 @@ pub fn apply(morphemes: Vec<Morpheme>, lexicon: &dyn Lexicon) -> Vec<Morpheme> {
             continue;
         };
 
-        // Skip the split if the compound is a real dictionary entry —
-        // the Lexicon callback knows what's in the vocab catalog.
-        if lexicon.has_compound_entry(&m.dictionary_form) {
+        // Skip the split if the lexicon confirms the compound exists
+        // as a single dictionary entry (the catalog already knows it).
+        // None and Some(false) → proceed with split.
+        if lexicon.has_compound_entry(&m.dictionary_form) == Some(true) {
             result.push(m);
             continue;
         }
@@ -142,13 +143,14 @@ mod tests {
         Morpheme::synthesize(surface, "", dict, vec!["動詞".into()], 0..n)
     }
 
-    /// Lexicon implementation that says yes for a fixed compound —
-    /// used to test the "skip split when compound is a real entry"
-    /// branch.
+    /// Lexicon implementation that says Some(true) for a fixed
+    /// compound — used to test the "skip split when compound is a
+    /// real entry" branch. Other queries return Some(false) so we
+    /// distinguish "confirmed absent" from "no info".
     struct OneCompound(&'static str);
     impl Lexicon for OneCompound {
-        fn has_compound_entry(&self, term: &str) -> bool {
-            term == self.0
+        fn has_compound_entry(&self, term: &str) -> Option<bool> {
+            Some(term == self.0)
         }
     }
 
