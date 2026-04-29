@@ -29,6 +29,27 @@ pub const AUXILIARY_VERBS: &[&str] = &[
     "する",
 ];
 
+/// Auxiliary verb dictionary forms that *indicate* a verb predecessor
+/// (passive / causative / potential markers). Used by
+/// [`repair::orphaned_auxiliary`](crate::repair::orphaned_auxiliary)
+/// to detect mis-tokenisations where an auxiliary fragment got
+/// orphaned from its verb stem.
+///
+/// Mirror of `VerbIndicatingAuxiliaries` in
+/// [Sirush/Jiten Helpers/MorphologicalAnalyser.RuleData.cs](https://github.com/Sirush/Jiten/blob/master/Jiten.Parser/Helpers/MorphologicalAnalyser.RuleData.cs).
+pub const VERB_INDICATING_AUXILIARIES: &[&str] =
+    &["られる", "れる", "せる", "させる"];
+
+/// All godan verb dictionary-form endings (る/す/つ/く/ぐ/む/ぶ/ぬ/う).
+/// Used by [`repair::orphaned_auxiliary`](crate::repair::orphaned_auxiliary)
+/// to enumerate candidate dict forms when reconstructing a fragmented
+/// verb.
+///
+/// Mirror of `GodanVerbEndings` in
+/// [Sirush/Jiten Helpers/MorphologicalAnalyser.RuleData.cs](https://github.com/Sirush/Jiten/blob/master/Jiten.Parser/Helpers/MorphologicalAnalyser.RuleData.cs).
+pub const GODAN_VERB_ENDINGS: &[&str] =
+    &["る", "す", "つ", "く", "ぐ", "む", "ぶ", "ぬ", "う"];
+
 /// Suffixes that follow ん in compounds Sudachi sometimes glues
 /// together. Used by [`repair::n_tokenisation`](crate::repair::n_tokenisation)
 /// to split (e.g.) んだ into ん + だ.
