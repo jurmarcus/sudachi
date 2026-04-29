@@ -13,5 +13,6 @@ workspace = true
 
 [dependencies]
 sudachi.workspace = true
+sudachi-morphology.workspace = true
 bitflags = "2"
 thiserror = "2"

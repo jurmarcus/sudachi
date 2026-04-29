@@ -938,6 +938,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.11.1",
  "sudachi",
+ "sudachi-morphology",
  "thiserror 2.0.18",
 ]
 
