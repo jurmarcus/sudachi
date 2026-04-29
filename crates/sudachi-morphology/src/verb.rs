@@ -572,7 +572,13 @@ impl Verb {
     }
 
     /// Convenience: dispatch to a specific form by tag.
+    /// Routes irregular classes (Suru, SuruCompound, Kuru) through
+    /// the per-form lookup table; everything else through the
+    /// rule-driven methods on this struct.
     pub fn conjugate(&self, form: ConjForm) -> Option<Conjugated> {
+        if self.class.is_irregular() {
+            return crate::irregular::lookup_irregular(&self.dict_form, self.class, form);
+        }
         Some(match form {
             ConjForm::Dictionary => self.dictionary(),
             ConjForm::Negative => self.negative(),

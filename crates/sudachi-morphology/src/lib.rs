@@ -53,10 +53,16 @@
 //! - `data/irregular/` — full paradigms for する / 来る / ある / 行く
 //! - `data/negative_chain/` — なくて / なければ / ずに
 
+pub mod adjective;
+pub mod copula;
+pub mod irregular;
 pub mod kana;
 pub mod tag;
 pub mod verb;
 pub mod verb_class;
+
+pub use adjective::{IAdjective, NaAdjective};
+pub use copula::{conjugate_copula, conjugate_explanatory, CopulaForm};
 
 pub use tag::ConjForm;
 pub use verb::{Conjugated, Verb};
