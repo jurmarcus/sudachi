@@ -165,13 +165,19 @@ fn apply_rule(form: &Form, rule: &Rule) -> Option<Form> {
 
     let prefix = &form.text[..form.text.len() - rule.con_end.len()];
     let new_text = format!("{}{}", prefix, rule.dec_end);
-    if form.seen.contains(&new_text) {
+    // Cycle check: only reject when the rule actually CHANGES the
+    // text. Pure tag-transition rules (con_end="" + dec_end="" = no
+    // text change) MUST be allowed even when new_text == form.text,
+    // otherwise the stem-mizenkei → stem-a → v5r chain breaks.
+    if new_text != form.text && form.seen.contains(&new_text) {
         return None;
     }
 
     let mut next = form.clone();
     next.text = new_text.clone();
-    next.seen.push(new_text);
+    if new_text != form.text {
+        next.seen.push(new_text);
+    }
     if !rule.detail.is_empty() {
         next.process.push(rule.detail.clone());
     }
