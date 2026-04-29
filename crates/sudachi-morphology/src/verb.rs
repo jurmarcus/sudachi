@@ -571,6 +571,330 @@ impl Verb {
         }
     }
 
+    /// Movement-toward — te-form + くる (歩いてくる).
+    pub fn coming_to(&self) -> Conjugated {
+        Conjugated {
+            surface: append(&self.te_form().surface, "くる"),
+            form: ConjForm::ComingTo,
+        }
+    }
+
+    /// Movement-away — te-form + いく (歩いていく).
+    pub fn going_to(&self) -> Conjugated {
+        Conjugated {
+            surface: append(&self.te_form().surface, "いく"),
+            form: ConjForm::GoingTo,
+        }
+    }
+
+    /// Receiving favour — te-form + もらう (教えてもらう).
+    pub fn receiving(&self) -> Conjugated {
+        Conjugated {
+            surface: append(&self.te_form().surface, "もらう"),
+            form: ConjForm::Receiving,
+        }
+    }
+
+    /// Giving favour outward — te-form + くれる (教えてくれる).
+    pub fn giving_outward(&self) -> Conjugated {
+        Conjugated {
+            surface: append(&self.te_form().surface, "くれる"),
+            form: ConjForm::GivingOutward,
+        }
+    }
+
+    /// Giving favour to other — te-form + あげる (教えてあげる).
+    pub fn giving_to_other(&self) -> Conjugated {
+        Conjugated {
+            surface: append(&self.te_form().surface, "あげる"),
+            form: ConjForm::GivingToOther,
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Volitional / conjectural extensions
+    // ─────────────────────────────────────────────────────────────────
+
+    /// Negative volitional — verb + まい (行くまい). Plain dict form
+    /// + まい is the modern usage; classical needed stem inflections.
+    pub fn volitional_negative(&self) -> Conjugated {
+        Conjugated {
+            surface: append(&self.dict_form, "まい"),
+            form: ConjForm::VolitionalNegative,
+        }
+    }
+
+    /// Conjectural — verb + だろう (行くだろう, 食べるだろう).
+    pub fn conjectural(&self) -> Conjugated {
+        Conjugated {
+            surface: append(&self.dict_form, "だろう"),
+            form: ConjForm::Conjectural,
+        }
+    }
+
+    /// Polite conjectural — verb + でしょう (行くでしょう).
+    pub fn conjectural_polite(&self) -> Conjugated {
+        Conjugated {
+            surface: append(&self.dict_form, "でしょう"),
+            form: ConjForm::ConjecturalPolite,
+        }
+    }
+
+    /// Volitional + attempt — てみよう (食べてみよう "let me try
+    /// eating"). Composed: te-form + みよう.
+    pub fn attempt_volitional(&self) -> Conjugated {
+        Conjugated {
+            surface: append(&self.te_form().surface, "みよう"),
+            form: ConjForm::AttemptVolitional,
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Voice extensions
+    // ─────────────────────────────────────────────────────────────────
+
+    /// Short causative — godan: a-stem + す (書かす, 読ます). For
+    /// ichidan the same as full causative + reduction (食べさす).
+    pub fn causative_short(&self) -> Conjugated {
+        let surface = if self.class.is_ichidan() {
+            append(&self.root(), "さす")
+        } else {
+            append(&self.stem_mizen(), "す")
+        };
+        Conjugated {
+            surface,
+            form: ConjForm::CausativeShort,
+        }
+    }
+
+    /// Honorific — same surface as Passive, semantically distinct
+    /// (尊敬語 reading of れる/られる).
+    pub fn honorific(&self) -> Conjugated {
+        let p = self.passive();
+        Conjugated {
+            surface: p.surface,
+            form: ConjForm::Honorific,
+        }
+    }
+
+    /// Negative potential — ichidan: stem + られない. godan: e-stem +
+    /// ない (書けない, 読めない).
+    pub fn potential_negative(&self) -> Conjugated {
+        let surface = if self.class.is_ichidan() {
+            append(&self.root(), "られない")
+        } else {
+            append(&self.stem_izen(), "ない")
+        };
+        Conjugated {
+            surface,
+            form: ConjForm::PotentialNegative,
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Negative variants
+    // ─────────────────────────────────────────────────────────────────
+
+    /// Classical negative — a-stem + ぬ (行かぬ, 食べぬ).
+    pub fn negative_nu(&self) -> Conjugated {
+        let surface = if self.class.is_ichidan() {
+            append(&self.root(), "ぬ")
+        } else {
+            append(&self.stem_mizen(), "ぬ")
+        };
+        Conjugated {
+            surface,
+            form: ConjForm::NegativeNu,
+        }
+    }
+
+    /// Classical negative continuative — a-stem + ず (行かず, 食べず).
+    pub fn negative_zu(&self) -> Conjugated {
+        let surface = if self.class.is_ichidan() {
+            append(&self.root(), "ず")
+        } else {
+            append(&self.stem_mizen(), "ず")
+        };
+        Conjugated {
+            surface,
+            form: ConjForm::NegativeZu,
+        }
+    }
+
+    /// Negative continuative without doing — a-stem + ずに (行かずに).
+    pub fn negative_without_doing(&self) -> Conjugated {
+        let surface = if self.class.is_ichidan() {
+            append(&self.root(), "ずに")
+        } else {
+            append(&self.stem_mizen(), "ずに")
+        };
+        Conjugated {
+            surface,
+            form: ConjForm::NegativeWithoutDoing,
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Past variants
+    // ─────────────────────────────────────────────────────────────────
+
+    /// Past tara conditional — alias for [`Self::conditional_tara`].
+    /// JMdict / nazeka treats this as a distinct form so we expose
+    /// the alias to keep the ConjForm dispatch closed.
+    pub fn past_tara(&self) -> Conjugated {
+        let mut c = self.conditional_tara();
+        c.form = ConjForm::PastTara;
+        c
+    }
+
+    /// Past tari — past + り (走ったり, 食べたり). Used for listing.
+    pub fn past_tari(&self) -> Conjugated {
+        let surface = append(&self.past().surface, "り");
+        Conjugated {
+            surface,
+            form: ConjForm::PastTari,
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Modal compounds
+    // ─────────────────────────────────────────────────────────────────
+
+    /// Obligation — negative_ba + ならない (行かなければならない).
+    pub fn obligation(&self) -> Conjugated {
+        Conjugated {
+            surface: append(&self.negative_ba().surface, "ならない"),
+            form: ConjForm::Obligation,
+        }
+    }
+
+    /// Permission — te-form + もいい (食べてもいい).
+    pub fn permission(&self) -> Conjugated {
+        Conjugated {
+            surface: append(&self.te_form().surface, "もいい"),
+            form: ConjForm::Permission,
+        }
+    }
+
+    /// Prohibition — te-form + はいけない (食べてはいけない).
+    pub fn prohibition(&self) -> Conjugated {
+        Conjugated {
+            surface: append(&self.te_form().surface, "はいけない"),
+            form: ConjForm::Prohibition,
+        }
+    }
+
+    /// Recommendation — dict + べき (行くべき). べし for classical
+    /// usage is just dict + べし; we use べき as the standard modern
+    /// attributive form.
+    pub fn recommendation(&self) -> Conjugated {
+        Conjugated {
+            surface: append(&self.dict_form, "べき"),
+            form: ConjForm::Recommendation,
+        }
+    }
+
+    /// Hearsay — dict + そうだ (行くそうだ "I heard he's going").
+    /// Distinct from Appearance — Hearsay attaches to dict form,
+    /// Appearance to the stem.
+    pub fn hearsay(&self) -> Conjugated {
+        Conjugated {
+            surface: append(&self.dict_form, "そうだ"),
+            form: ConjForm::Hearsay,
+        }
+    }
+
+    /// Appearance — i-stem + そうだ (行きそうだ "looks like he's
+    /// going"). Distinct from Hearsay — see [`Self::hearsay`].
+    pub fn appearance(&self) -> Conjugated {
+        Conjugated {
+            surface: append(&self.stem_renyou(), "そうだ"),
+            form: ConjForm::Appearance,
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Honorific / humble (keigo)
+    // ─────────────────────────────────────────────────────────────────
+
+    /// Honorific construction — お + i-stem + になる (お読みになる).
+    /// Note: this is the construction; the actual NOUN-stem requires
+    /// vocab-specific knowledge for which honorific prefix お/ご
+    /// applies.
+    pub fn honorific_oninaru(&self) -> Conjugated {
+        Conjugated {
+            surface: format!("お{}になる", self.stem_renyou()),
+            form: ConjForm::HonorificOninaru,
+        }
+    }
+
+    /// Humble construction — お + i-stem + する (お読みする).
+    pub fn humble_osuru(&self) -> Conjugated {
+        Conjugated {
+            surface: format!("お{}する", self.stem_renyou()),
+            form: ConjForm::HumbleOsuru,
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Explanatory のだ / のです
+    // ─────────────────────────────────────────────────────────────────
+
+    /// Explanatory — dict + のだ (行くのだ). Casual contraction is
+    /// んだ; we emit the long form here.
+    pub fn explanatory(&self) -> Conjugated {
+        Conjugated {
+            surface: append(&self.dict_form, "のだ"),
+            form: ConjForm::Explanatory,
+        }
+    }
+
+    /// Polite explanatory — dict + のです.
+    pub fn explanatory_polite(&self) -> Conjugated {
+        Conjugated {
+            surface: append(&self.dict_form, "のです"),
+            form: ConjForm::ExplanatoryPolite,
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Stems (exposed via ConjForm dispatch)
+    // ─────────────────────────────────────────────────────────────────
+
+    /// Mizen-stem (未然形) — bare a-stem (or ichidan root). Used by
+    /// negative / passive / causative chains.
+    pub fn mizen_stem(&self) -> Conjugated {
+        Conjugated {
+            surface: self.stem_mizen(),
+            form: ConjForm::StemMizen,
+        }
+    }
+
+    /// Renyou-stem (連用形) — bare i-stem (or ichidan root). Used
+    /// by polite / tai / appearance chains. Same as the masu-stem.
+    pub fn renyou_stem(&self) -> Conjugated {
+        Conjugated {
+            surface: self.stem_renyou(),
+            form: ConjForm::StemRenyou,
+        }
+    }
+
+    /// Izen-stem (已然形) — bare e-stem (or ichidan root). Used by
+    /// conditional ば and potential.
+    pub fn izen_stem(&self) -> Conjugated {
+        Conjugated {
+            surface: self.stem_izen(),
+            form: ConjForm::StemIzen,
+        }
+    }
+
+    /// Meirei-stem (命令形) — surface of imperative.
+    pub fn meirei_stem(&self) -> Conjugated {
+        let mut c = self.imperative();
+        c.form = ConjForm::StemMeirei;
+        c
+    }
+
     /// Convenience: dispatch to a specific form by tag.
     /// Routes irregular classes (Suru, SuruCompound, Kuru) through
     /// the per-form lookup table; everything else through the
@@ -611,7 +935,40 @@ impl Verb {
             ConjForm::Preparative => self.preparative(),
             ConjForm::Attempt => self.attempt(),
             ConjForm::Completion => self.completion(),
-            _ => return None,
+            ConjForm::ComingTo => self.coming_to(),
+            ConjForm::GoingTo => self.going_to(),
+            ConjForm::Receiving => self.receiving(),
+            ConjForm::GivingOutward => self.giving_outward(),
+            ConjForm::GivingToOther => self.giving_to_other(),
+            ConjForm::VolitionalNegative => self.volitional_negative(),
+            ConjForm::Conjectural => self.conjectural(),
+            ConjForm::ConjecturalPolite => self.conjectural_polite(),
+            ConjForm::AttemptVolitional => self.attempt_volitional(),
+            ConjForm::CausativeShort => self.causative_short(),
+            ConjForm::Honorific => self.honorific(),
+            ConjForm::PotentialNegative => self.potential_negative(),
+            ConjForm::NegativeNu => self.negative_nu(),
+            ConjForm::NegativeZu => self.negative_zu(),
+            ConjForm::NegativeWithoutDoing => self.negative_without_doing(),
+            ConjForm::PastTara => self.past_tara(),
+            ConjForm::PastTari => self.past_tari(),
+            ConjForm::Obligation => self.obligation(),
+            ConjForm::Permission => self.permission(),
+            ConjForm::Prohibition => self.prohibition(),
+            ConjForm::Recommendation => self.recommendation(),
+            ConjForm::Hearsay => self.hearsay(),
+            ConjForm::Appearance => self.appearance(),
+            ConjForm::HonorificOninaru => self.honorific_oninaru(),
+            ConjForm::HumbleOsuru => self.humble_osuru(),
+            ConjForm::Explanatory => self.explanatory(),
+            ConjForm::ExplanatoryPolite => self.explanatory_polite(),
+            ConjForm::StemMizen => self.mizen_stem(),
+            ConjForm::StemRenyou => self.renyou_stem(),
+            ConjForm::StemIzen => self.izen_stem(),
+            ConjForm::StemMeirei => self.meirei_stem(),
+            // ConjForm::StemA, StemE, StemI, StemO are deconjugator-internal
+            // intermediate forms; not exposed via forward Verb dispatch.
+            ConjForm::StemA | ConjForm::StemE | ConjForm::StemI | ConjForm::StemO => return None,
         })
     }
 }
@@ -779,5 +1136,149 @@ mod tests {
     fn ichidan_kureru_imperative_irregular() {
         // くれる's imperative is くれ (not くれろ).
         check("くれる", VerbClass::IchidanKureru, ConjForm::Imperative, "くれ");
+    }
+
+    // ─── Te-aux chains (新) ───────────────────────────────────────────
+
+    #[test]
+    fn te_chain_directional_and_giving() {
+        check("食べる", VerbClass::Ichidan, ConjForm::ComingTo, "食べてくる");
+        check("食べる", VerbClass::Ichidan, ConjForm::GoingTo, "食べていく");
+        check("食べる", VerbClass::Ichidan, ConjForm::Receiving, "食べてもらう");
+        check("食べる", VerbClass::Ichidan, ConjForm::GivingOutward, "食べてくれる");
+        check("食べる", VerbClass::Ichidan, ConjForm::GivingToOther, "食べてあげる");
+        check("書く", VerbClass::GodanKu, ConjForm::ComingTo, "書いてくる");
+        check("読む", VerbClass::GodanMu, ConjForm::Receiving, "読んでもらう");
+    }
+
+    // ─── Volitional / conjectural extensions ─────────────────────────
+
+    #[test]
+    fn volitional_and_conjectural_extensions() {
+        check("行く", VerbClass::GodanKuIku, ConjForm::VolitionalNegative, "行くまい");
+        check("食べる", VerbClass::Ichidan, ConjForm::Conjectural, "食べるだろう");
+        check("食べる", VerbClass::Ichidan, ConjForm::ConjecturalPolite, "食べるでしょう");
+        check("食べる", VerbClass::Ichidan, ConjForm::AttemptVolitional, "食べてみよう");
+    }
+
+    // ─── Voice extensions ────────────────────────────────────────────
+
+    #[test]
+    fn causative_short_and_potential_negative() {
+        check("書く", VerbClass::GodanKu, ConjForm::CausativeShort, "書かす");
+        check("食べる", VerbClass::Ichidan, ConjForm::CausativeShort, "食べさす");
+        check("書く", VerbClass::GodanKu, ConjForm::PotentialNegative, "書けない");
+        check("読む", VerbClass::GodanMu, ConjForm::PotentialNegative, "読めない");
+        check("食べる", VerbClass::Ichidan, ConjForm::PotentialNegative, "食べられない");
+    }
+
+    #[test]
+    fn honorific_passive_form_distinct_tag() {
+        let v = Verb::new("食べる", VerbClass::Ichidan);
+        let h = v.honorific();
+        let p = v.passive();
+        // Surface identical (尊敬語 reading of られる), tag distinct.
+        assert_eq!(h.surface, p.surface);
+        assert!(matches!(h.form, ConjForm::Honorific));
+        assert!(matches!(p.form, ConjForm::Passive));
+    }
+
+    // ─── Negative variants ───────────────────────────────────────────
+
+    #[test]
+    fn classical_negative_forms() {
+        check("行く", VerbClass::GodanKuIku, ConjForm::NegativeNu, "行かぬ");
+        check("食べる", VerbClass::Ichidan, ConjForm::NegativeNu, "食べぬ");
+        check("行く", VerbClass::GodanKuIku, ConjForm::NegativeZu, "行かず");
+        check("行く", VerbClass::GodanKuIku, ConjForm::NegativeWithoutDoing, "行かずに");
+    }
+
+    // ─── Past variants ───────────────────────────────────────────────
+
+    #[test]
+    fn past_tari_form() {
+        check("走る", VerbClass::GodanRu, ConjForm::PastTari, "走ったり");
+        check("食べる", VerbClass::Ichidan, ConjForm::PastTari, "食べたり");
+        check("読む", VerbClass::GodanMu, ConjForm::PastTari, "読んだり");
+    }
+
+    // ─── Modal compounds ─────────────────────────────────────────────
+
+    #[test]
+    fn modal_compounds() {
+        check("行く", VerbClass::GodanKuIku, ConjForm::Obligation, "行かなければならない");
+        check("食べる", VerbClass::Ichidan, ConjForm::Permission, "食べてもいい");
+        check("食べる", VerbClass::Ichidan, ConjForm::Prohibition, "食べてはいけない");
+        check("行く", VerbClass::GodanKuIku, ConjForm::Recommendation, "行くべき");
+    }
+
+    // ─── Hearsay vs appearance ───────────────────────────────────────
+
+    #[test]
+    fn hearsay_attaches_to_dict_form() {
+        check("行く", VerbClass::GodanKuIku, ConjForm::Hearsay, "行くそうだ");
+        check("食べる", VerbClass::Ichidan, ConjForm::Hearsay, "食べるそうだ");
+    }
+
+    #[test]
+    fn appearance_attaches_to_stem() {
+        check("行く", VerbClass::GodanKuIku, ConjForm::Appearance, "行きそうだ");
+        check("食べる", VerbClass::Ichidan, ConjForm::Appearance, "食べそうだ");
+        check("読む", VerbClass::GodanMu, ConjForm::Appearance, "読みそうだ");
+    }
+
+    // ─── Keigo constructions ─────────────────────────────────────────
+
+    #[test]
+    fn keigo_constructions() {
+        check(
+            "読む",
+            VerbClass::GodanMu,
+            ConjForm::HonorificOninaru,
+            "お読みになる",
+        );
+        check("読む", VerbClass::GodanMu, ConjForm::HumbleOsuru, "お読みする");
+        check(
+            "書く",
+            VerbClass::GodanKu,
+            ConjForm::HonorificOninaru,
+            "お書きになる",
+        );
+    }
+
+    // ─── Explanatory ─────────────────────────────────────────────────
+
+    #[test]
+    fn explanatory_chains() {
+        check("行く", VerbClass::GodanKuIku, ConjForm::Explanatory, "行くのだ");
+        check(
+            "行く",
+            VerbClass::GodanKuIku,
+            ConjForm::ExplanatoryPolite,
+            "行くのです",
+        );
+        check("食べる", VerbClass::Ichidan, ConjForm::Explanatory, "食べるのだ");
+    }
+
+    // ─── Stem accessors via dispatch ─────────────────────────────────
+
+    #[test]
+    fn stems_accessible_via_dispatch() {
+        check("書く", VerbClass::GodanKu, ConjForm::StemRenyou, "書き");
+        check("書く", VerbClass::GodanKu, ConjForm::StemMizen, "書か");
+        check("書く", VerbClass::GodanKu, ConjForm::StemIzen, "書け");
+        check("書く", VerbClass::GodanKu, ConjForm::StemMeirei, "書け");
+        check("食べる", VerbClass::Ichidan, ConjForm::StemRenyou, "食べ");
+        check("食べる", VerbClass::Ichidan, ConjForm::StemMeirei, "食べろ");
+    }
+
+    #[test]
+    fn deconjugator_internal_stems_return_none() {
+        // StemA/E/I/O are deconjugator-internal; not exposed forward.
+        let v = Verb::new("書く", VerbClass::GodanKu);
+        assert!(v.conjugate(ConjForm::StemA).is_none());
+        assert!(v.conjugate(ConjForm::StemE).is_none());
+        assert!(v.conjugate(ConjForm::StemI).is_none());
+        assert!(v.conjugate(ConjForm::StemO).is_none());
     }
 }
