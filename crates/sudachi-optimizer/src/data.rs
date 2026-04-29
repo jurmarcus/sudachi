@@ -29,6 +29,26 @@ pub const AUXILIARY_VERBS: &[&str] = &[
     "する",
 ];
 
+/// Suffixes that follow ん in compounds Sudachi sometimes glues
+/// together. Used by [`repair::n_tokenisation`](crate::repair::n_tokenisation)
+/// to split (e.g.) んだ into ん + だ.
+///
+/// Mirror of `NCompoundSuffixes` in
+/// [Sirush/Jiten Helpers/MorphologicalAnalyser.RuleData.cs](https://github.com/Sirush/Jiten/blob/master/Jiten.Parser/Helpers/MorphologicalAnalyser.RuleData.cs).
+pub const N_COMPOUND_SUFFIXES: &[&str] = &[
+    "だ", "です", "じゃ", "なら", "ても", "でも", "だろ", "だろう", "だって", "だけど",
+    "だけ", "だが", "だし", "だから",
+];
+
+/// Suffixes that follow だ when preceded by ん. Used by
+/// [`repair::n_tokenisation`](crate::repair::n_tokenisation) to split
+/// (e.g.) だが after ん into だ + が.
+///
+/// Mirror of `DaCompoundSuffixes` in
+/// [Sirush/Jiten Helpers/MorphologicalAnalyser.RuleData.cs](https://github.com/Sirush/Jiten/blob/master/Jiten.Parser/Helpers/MorphologicalAnalyser.RuleData.cs).
+pub const DA_COMPOUND_SUFFIXES: &[&str] =
+    &["が", "けど", "けれど", "けれども", "から", "し", "って", "の"];
+
 /// Maps an auxiliary verb (dictionary form) to the surface stem it
 /// inflects from. Used by `split::compound_auxiliary_verbs` to
 /// validate that the surface form actually contains the stem before
