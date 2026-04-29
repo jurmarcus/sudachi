@@ -1,105 +1,116 @@
-//! [`OptimizerToken`] — the working token type used by every rule.
+//! [`Morpheme`] — owned, optimizer-friendly mirror of Sudachi's
+//! borrowed [`sudachi::Morpheme<'_, T>`](crate::sudachi::Morpheme).
 //!
-//! Wraps Sudachi's per-morpheme output (surface, reading, dictionary
-//! form, POS) with two additions the optimizer pipeline needs:
+//! Field names match Sudachi's [`Morpheme`] method names (`surface`,
+//! `reading_form`, `dictionary_form`, `normalized_form`,
+//! `part_of_speech`) so a Sudachi user looking at this struct can
+//! pattern-match what they already know. Two fields are this crate's
+//! own additions:
 //!
-//! 1. [`SemanticPos`] — the POS classification re-encoded as an enum
-//!    rather than the raw `Vec<String>` Sudachi returns. Lets rules
-//!    pattern-match `match token.semantic_pos { Suffix => ... }`
-//!    instead of repeatedly inspecting `pos[0] == "接尾辞"` strings.
+//! 1. [`pos`](Morpheme::pos) — Sudachi's `part_of_speech` re-encoded
+//!    as a closed [`Pos`] enum, computed once from the raw POS strings.
+//!    Lets stages pattern-match `match m.pos { Pos::Suffix => … }`
+//!    instead of repeatedly inspecting `part_of_speech[0] == "接尾辞"`.
 //!
-//! 2. `applied_rules` — names of optimizer stages that touched this
-//!    token. The downstream consumer (e.g., jisho-core's
-//!    `passage_span_decisions`) audits this trail to understand why
-//!    a span ended up the way it did.
+//! 2. [`applied_rules`](Morpheme::applied_rules) — names of optimizer
+//!    stages that touched this morpheme. The downstream consumer
+//!    (e.g., jisho-core's `passage_span_decisions`) audits this trail
+//!    to understand why a span ended up the way it did.
 
 use std::ops::Range;
 
-/// A single token flowing through the optimizer pipeline.
+/// Owned morpheme flowing through the optimizer pipeline.
 ///
-/// Constructed from Sudachi's `Morpheme` via [`from_morpheme`], or
-/// synthesised by Split rules that fabricate new tokens.
+/// Constructed from a Sudachi [`sudachi::Morpheme`](crate::sudachi::Morpheme)
+/// via [`Morpheme::from_sudachi`], or synthesised by Split phase
+/// stages that fabricate new morphemes via [`Morpheme::synthesize`].
 #[derive(Debug, Clone)]
-pub struct OptimizerToken {
+pub struct Morpheme {
     /// Surface form as it appears in the source text.
+    /// Mirrors [`sudachi::Morpheme::surface`](crate::sudachi::Morpheme).
     pub surface: String,
-    /// Reading in hiragana. Empty string when Sudachi returns no
-    /// reading (rare — usually only for symbols and OOV).
-    pub reading: String,
+    /// Hiragana reading form. Empty when Sudachi returns no reading
+    /// (rare — usually only for symbols and OOV input).
+    /// Mirrors [`sudachi::Morpheme::reading_form`](crate::sudachi::Morpheme).
+    pub reading_form: String,
     /// Dictionary (lemma) form: `食べ` → `食べる`.
+    /// Mirrors [`sudachi::Morpheme::dictionary_form`](crate::sudachi::Morpheme).
     pub dictionary_form: String,
-    /// Normalized form (Sudachi's `normalized_form()`). Same as
-    /// dictionary form for most tokens, differs for kana-variant
-    /// inputs (`れすとらん` → `レストラン`).
+    /// Normalized form. Same as `dictionary_form` for most morphemes;
+    /// differs for kana-variant inputs (`れすとらん` → `レストラン`).
+    /// Mirrors [`sudachi::Morpheme::normalized_form`](crate::sudachi::Morpheme).
     pub normalized_form: String,
-    /// Raw Sudachi POS (length 6 for UniDic). Kept alongside
-    /// `semantic_pos` because rules occasionally need the original
-    /// fine-grained sub-POS.
-    pub pos: Vec<String>,
-    /// Cached semantic classification of `pos`. See [`SemanticPos`].
-    pub semantic_pos: SemanticPos,
-    /// Character-offset range in the source text. For tokens
-    /// fabricated by Split rules, this points to the character span
-    /// of the resulting fragment.
+    /// Raw Sudachi POS (length 6 for UniDic). Kept alongside [`pos`]
+    /// because some stages need the original fine-grained sub-POS.
+    /// Mirrors [`sudachi::Morpheme::part_of_speech`](crate::sudachi::Morpheme).
+    pub part_of_speech: Vec<String>,
+    /// Cached semantic classification of [`part_of_speech`]. Optimizer
+    /// addition — see [`Pos`].
+    pub pos: Pos,
+    /// Character-offset range in the source text. Equivalent to
+    /// `begin_c()..end_c()` on the underlying Sudachi morpheme. For
+    /// morphemes fabricated by Split stages, this points to the
+    /// character span of the resulting fragment.
     pub char_range: Range<usize>,
-    /// Names of stages that have touched this token, in order.
-    /// Empty for raw Sudachi output; gets pushed to as rules apply.
+    /// Names of stages that have touched this morpheme, in order.
+    /// Empty for raw Sudachi output; gets pushed to as stages apply.
+    /// Optimizer addition.
     pub applied_rules: Vec<&'static str>,
 }
 
-impl OptimizerToken {
-    /// Build a token directly from a Sudachi `Morpheme`. Generic over
-    /// the dictionary handle type (`Morpheme<'_, T>`) so callers can
-    /// pass either an `Arc<JapaneseDictionary>` or a borrowed handle.
-    pub fn from_morpheme<T: ::sudachi::analysis::stateless_tokenizer::DictionaryAccess>(
+impl Morpheme {
+    /// Build an owned [`Morpheme`] from a borrowed Sudachi morpheme.
+    /// Generic over Sudachi's `DictionaryAccess` so callers can pass
+    /// any morpheme regardless of how the dictionary is held.
+    pub fn from_sudachi<T: ::sudachi::analysis::stateless_tokenizer::DictionaryAccess>(
         m: &::sudachi::analysis::morpheme::Morpheme<'_, T>,
     ) -> Self {
         let surface: String = m.surface().to_string();
-        let pos_slice: &[String] = m.part_of_speech();
-        let pos: Vec<String> = pos_slice.iter().cloned().collect();
-        let semantic_pos = SemanticPos::from_pos(&pos);
+        let part_of_speech: Vec<String> = m.part_of_speech().iter().cloned().collect();
+        let pos = Pos::from_part_of_speech(&part_of_speech);
         let begin = m.begin_c();
         let end = m.end_c();
         Self {
             surface,
-            reading: m.reading_form().to_string(),
+            reading_form: m.reading_form().to_string(),
             dictionary_form: m.dictionary_form().to_string(),
             normalized_form: m.normalized_form().to_string(),
+            part_of_speech,
             pos,
-            semantic_pos,
             char_range: begin..end,
             applied_rules: Vec::new(),
         }
     }
 
-    /// Convenience for rules that fabricate tokens.
+    /// Convenience for stages that fabricate morphemes (Split rules).
+    /// Computes [`pos`] from the supplied `part_of_speech`.
     pub fn synthesize(
         surface: impl Into<String>,
-        reading: impl Into<String>,
+        reading_form: impl Into<String>,
         dictionary_form: impl Into<String>,
-        pos: Vec<String>,
+        part_of_speech: Vec<String>,
         char_range: Range<usize>,
     ) -> Self {
         let surface = surface.into();
-        let reading = reading.into();
+        let reading_form = reading_form.into();
         let dictionary_form = dictionary_form.into();
         let normalized_form = dictionary_form.clone();
-        let semantic_pos = SemanticPos::from_pos(&pos);
+        let pos = Pos::from_part_of_speech(&part_of_speech);
         Self {
             surface,
-            reading,
+            reading_form,
             dictionary_form,
             normalized_form,
+            part_of_speech,
             pos,
-            semantic_pos,
             char_range,
             applied_rules: Vec::new(),
         }
     }
 
-    /// Push a rule name into `applied_rules`. Idempotent — if the same
-    /// rule fires twice on the same token (rare, but happens in
-    /// re-scan loops) we only record it once.
+    /// Push a stage name into [`applied_rules`]. Idempotent — if the
+    /// same stage fires twice on the same morpheme (rare, but happens
+    /// in re-scan loops) we only record it once.
     pub fn record_rule(&mut self, name: &'static str) {
         if !self.applied_rules.contains(&name) {
             self.applied_rules.push(name);
@@ -107,15 +118,15 @@ impl OptimizerToken {
     }
 }
 
-/// High-level POS classification. Computed once from raw Sudachi POS
-/// strings so downstream rules can pattern-match on a closed enum
-/// rather than parse `pos[0]` repeatedly.
+/// Semantic top-level part-of-speech classification.
 ///
-/// Rules wanting fine-grained classification (`pos[1..]`) still read
-/// from [`OptimizerToken::pos`] — this enum collapses only the
-/// top-level distinction.
+/// Computed once from raw Sudachi POS strings so downstream stages
+/// can pattern-match on a closed enum rather than parse
+/// `part_of_speech[0]` repeatedly. Rules wanting fine-grained
+/// classification still read [`Morpheme::part_of_speech`] for
+/// `pos[1..]` — this enum collapses only the top-level distinction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SemanticPos {
+pub enum Pos {
     /// 名詞 — noun.
     Noun,
     /// 動詞 — verb.
@@ -150,30 +161,30 @@ pub enum SemanticPos {
     Other,
 }
 
-impl SemanticPos {
+impl Pos {
     /// Classify the top-level Sudachi UniDic POS string into a
     /// semantic enum.
-    pub fn from_pos(pos: &[String]) -> Self {
-        let Some(top) = pos.first() else {
-            return SemanticPos::Other;
+    pub fn from_part_of_speech(part_of_speech: &[String]) -> Self {
+        let Some(top) = part_of_speech.first() else {
+            return Pos::Other;
         };
         match top.as_str() {
-            "名詞" => SemanticPos::Noun,
-            "動詞" => SemanticPos::Verb,
-            "形容詞" => SemanticPos::Adjective,
-            "形状詞" => SemanticPos::AdjectivalNoun,
-            "副詞" => SemanticPos::Adverb,
-            "連体詞" => SemanticPos::Adnominal,
-            "接続詞" => SemanticPos::Conjunction,
-            "感動詞" => SemanticPos::Interjection,
-            "助動詞" => SemanticPos::Auxiliary,
-            "助詞" => SemanticPos::Particle,
-            "接頭辞" => SemanticPos::Prefix,
-            "接尾辞" => SemanticPos::Suffix,
-            "代名詞" => SemanticPos::Pronoun,
-            "記号" | "補助記号" => SemanticPos::Symbol,
-            "空白" => SemanticPos::Whitespace,
-            _ => SemanticPos::Other,
+            "名詞" => Pos::Noun,
+            "動詞" => Pos::Verb,
+            "形容詞" => Pos::Adjective,
+            "形状詞" => Pos::AdjectivalNoun,
+            "副詞" => Pos::Adverb,
+            "連体詞" => Pos::Adnominal,
+            "接続詞" => Pos::Conjunction,
+            "感動詞" => Pos::Interjection,
+            "助動詞" => Pos::Auxiliary,
+            "助詞" => Pos::Particle,
+            "接頭辞" => Pos::Prefix,
+            "接尾辞" => Pos::Suffix,
+            "代名詞" => Pos::Pronoun,
+            "記号" | "補助記号" => Pos::Symbol,
+            "空白" => Pos::Whitespace,
+            _ => Pos::Other,
         }
     }
 }
@@ -183,27 +194,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn semantic_pos_classifies_top_level() {
+    fn pos_classifies_top_level() {
         assert_eq!(
-            SemanticPos::from_pos(&["名詞".into(), "普通名詞".into()]),
-            SemanticPos::Noun
+            Pos::from_part_of_speech(&["名詞".into(), "普通名詞".into()]),
+            Pos::Noun
         );
-        assert_eq!(
-            SemanticPos::from_pos(&["助動詞".into()]),
-            SemanticPos::Auxiliary
-        );
-        assert_eq!(
-            SemanticPos::from_pos(&["接頭辞".into()]),
-            SemanticPos::Prefix
-        );
-        assert_eq!(SemanticPos::from_pos(&[]), SemanticPos::Other);
+        assert_eq!(Pos::from_part_of_speech(&["助動詞".into()]), Pos::Auxiliary);
+        assert_eq!(Pos::from_part_of_speech(&["接頭辞".into()]), Pos::Prefix);
+        assert_eq!(Pos::from_part_of_speech(&[]), Pos::Other);
     }
 
     #[test]
     fn record_rule_is_idempotent() {
-        let mut t = OptimizerToken::synthesize("猫", "ねこ", "猫", vec!["名詞".into()], 0..1);
-        t.record_rule("test");
-        t.record_rule("test");
-        assert_eq!(t.applied_rules, vec!["test"]);
+        let mut m = Morpheme::synthesize("猫", "ねこ", "猫", vec!["名詞".into()], 0..1);
+        m.record_rule("test");
+        m.record_rule("test");
+        assert_eq!(m.applied_rules, vec!["test"]);
     }
 }

@@ -1,34 +1,34 @@
-//! Pipeline orchestrator: ordered stage list + feature-gated runner.
+//! [`Pipeline`] — bundle of stages + the optimizer orchestrator.
 //!
-//! The runner mirrors Jiten's `RunPipeline` (Stages/MorphologicalAnalyser.Pipeline.cs):
-//! scan token stream → for each stage, skip if its feature gate
-//! doesn't match → apply → re-scan if the token list changed.
+//! The runner mirrors Jiten's `RunPipeline`
+//! (Stages/MorphologicalAnalyser.Pipeline.cs):
+//! scan morpheme stream → for each stage, skip if its feature gate
+//! doesn't match → apply → re-scan if the morpheme list changed.
 
-use crate::lookup::{NoLookup, OptimizerLookup};
+use crate::lookup::{EmptyLexicon, Lexicon};
 use crate::stage::Stage;
 #[cfg(test)]
-use crate::stage::StageGroup;
-use crate::token::OptimizerToken;
-use crate::token_features::TokenFeatures;
+use crate::stage::Phase;
+use crate::token::Morpheme;
+use crate::token_features::MorphemeFeatures;
 
-/// A bundle of stages plus the order they run in.
+/// An ordered bundle of optimizer [`Stage`]s.
 ///
-/// Different consumers want different rule subsets. Build a custom
-/// set with [`RuleSet::new`], or use the convenience constructors:
+/// Different consumers want different stage subsets. Build a custom
+/// pipeline with [`Pipeline::new`], or use the convenience
+/// constructors:
 ///
-/// - [`RuleSet::all`] — every rule, full Jiten-equivalent pipeline.
-///   Default for jisho-core.
-/// - [`RuleSet::analysis`] — alias for `all`. Reads better in
-///   analysis contexts.
-/// - [`RuleSet::search`] — minimal set for FTS consumers. Today this
+/// - [`Pipeline::analysis`] — every stage, full Jiten-equivalent
+///   pipeline. The default for dictionary-lookup consumers.
+/// - [`Pipeline::search`] — minimal set for FTS consumers. Today this
 ///   is empty (search wants raw Sudachi); kept as a hook so we can
 ///   add search-specific rules without breaking callers.
-/// - [`RuleSet::empty`] — no rules. Test fixture.
-pub struct RuleSet {
+/// - [`Pipeline::empty`] — no stages. Test fixture.
+pub struct Pipeline {
     stages: Vec<Stage>,
 }
 
-impl RuleSet {
+impl Pipeline {
     pub fn new(stages: Vec<Stage>) -> Self {
         Self { stages }
     }
@@ -37,9 +37,9 @@ impl RuleSet {
         Self { stages: Vec::new() }
     }
 
-    /// Every rule, in the canonical Jiten ordering.
+    /// Every stage, in the canonical Jiten ordering.
     ///
-    /// Stage order from Sirush/Jiten Stages/MorphologicalAnalyser.Pipeline.cs:
+    /// Sequence (from Sirush/Jiten Stages/MorphologicalAnalyser.Pipeline.cs):
     ///
     /// ```text
     /// Split:  CompoundAuxiliaryVerbs, TatteParticle, TanSuffix, TawakeNoun
@@ -54,70 +54,61 @@ impl RuleSet {
     /// Cleanup:FilterMisparse
     /// Disambiguation: FixReadingAmbiguity
     /// ```
-    pub fn all() -> Self {
-        Self::new(crate::pipeline::canonical_stages())
-    }
-
-    /// Alias for [`Self::all`] — reads better in analysis contexts.
     pub fn analysis() -> Self {
-        Self::all()
+        Self::new(canonical_stages())
     }
 
-    /// Search-engine ruleset. Currently empty (search consumers want
-    /// raw Sudachi; rules would interfere with FTS index alignment).
-    /// Kept as a hook so we can add search-friendly rules later
-    /// (e.g., normalise long-vowel marks for fuzzy matching) without
-    /// breaking callers.
+    /// Search-engine pipeline. Currently empty (search consumers
+    /// want raw Sudachi; rules would interfere with FTS index
+    /// alignment). Kept as a hook so we can add search-friendly
+    /// stages later (e.g., normalise long-vowel marks for fuzzy
+    /// matching) without breaking callers.
     pub fn search() -> Self {
         Self::empty()
     }
 
-    /// Returns the underlying stage list. Mostly useful for
-    /// diagnostics and tests.
+    /// The underlying stage list. Mostly useful for diagnostics and
+    /// tests.
     pub fn stages(&self) -> &[Stage] {
         &self.stages
     }
 }
 
-/// Run the optimizer pipeline against `tokens` using `lookup` for
-/// vocab queries. `tokens` is consumed; the returned vector is the
-/// post-optimisation stream.
+/// Run the optimizer `pipeline` against `morphemes` using `lexicon`
+/// for vocab queries. `morphemes` is consumed; the returned vector
+/// is the post-optimisation stream.
 ///
-/// Generic over any [`OptimizerLookup`]; the dyn-cast happens at the
-/// stage boundary so each stage's closure sees a uniform
-/// `&dyn OptimizerLookup`.
-pub fn optimize_tokens<L: OptimizerLookup>(
-    mut tokens: Vec<OptimizerToken>,
-    rules: &RuleSet,
-    lookup: &L,
-) -> Vec<OptimizerToken> {
-    let lookup_dyn: &dyn OptimizerLookup = lookup;
-    let mut features = TokenFeatures::scan(&tokens);
+/// Generic over any [`Lexicon`]; the dyn-cast happens at the stage
+/// boundary so each stage's closure sees a uniform `&dyn Lexicon`.
+pub fn optimize<L: Lexicon>(
+    mut morphemes: Vec<Morpheme>,
+    pipeline: &Pipeline,
+    lexicon: &L,
+) -> Vec<Morpheme> {
+    let lexicon_dyn: &dyn Lexicon = lexicon;
+    let mut features = MorphemeFeatures::scan(&morphemes);
 
-    for stage in &rules.stages {
+    for stage in &pipeline.stages {
         if !stage.required_features.is_empty()
             && (features & stage.required_features).is_empty()
         {
             continue;
         }
-        let prev_len = tokens.len();
-        let next = stage.apply(tokens, lookup_dyn);
+        let prev_len = morphemes.len();
+        let next = stage.apply(morphemes, lexicon_dyn);
         // Re-scan only when the stage actually changed the stream.
         let changed = next.len() != prev_len;
-        tokens = next;
+        morphemes = next;
         if changed {
-            features = TokenFeatures::scan(&tokens);
+            features = MorphemeFeatures::scan(&morphemes);
         }
     }
-    tokens
+    morphemes
 }
 
-/// Convenience: run with [`NoLookup`].
-pub fn optimize_tokens_no_lookup(
-    tokens: Vec<OptimizerToken>,
-    rules: &RuleSet,
-) -> Vec<OptimizerToken> {
-    optimize_tokens(tokens, rules, &NoLookup)
+/// Convenience: run with [`EmptyLexicon`].
+pub fn optimize_no_lexicon(morphemes: Vec<Morpheme>, pipeline: &Pipeline) -> Vec<Morpheme> {
+    optimize(morphemes, pipeline, &EmptyLexicon)
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -126,7 +117,7 @@ pub fn optimize_tokens_no_lookup(
 
 /// Build the full Jiten-equivalent stage list. Ordering matches
 /// Sirush/Jiten Stages/MorphologicalAnalyser.Pipeline.cs.
-fn canonical_stages() -> Vec<Stage> {
+pub fn canonical_stages() -> Vec<Stage> {
     use crate::{cleanup, combine, disambiguation, repair, split};
 
     vec![
@@ -177,37 +168,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_ruleset_is_identity() {
-        let toks = vec![OptimizerToken::synthesize(
+    fn empty_pipeline_is_identity() {
+        let ms = vec![Morpheme::synthesize(
             "猫",
             "ねこ",
             "猫",
             vec!["名詞".into()],
             0..1,
         )];
-        let out = optimize_tokens_no_lookup(toks.clone(), &RuleSet::empty());
+        let out = optimize_no_lexicon(ms, &Pipeline::empty());
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].surface, "猫");
     }
 
     #[test]
-    fn canonical_stages_compile_and_run() {
-        // Smoke test: building the full canonical RuleSet must not
-        // panic, and running it on an empty token stream returns
+    fn canonical_pipeline_compiles_and_runs() {
+        // Smoke test: building the full canonical Pipeline must not
+        // panic, and running it on an empty morpheme stream returns
         // an empty stream.
-        let rules = RuleSet::all();
-        assert!(!rules.stages().is_empty());
-        let out = optimize_tokens_no_lookup(Vec::new(), &rules);
+        let pipeline = Pipeline::analysis();
+        assert!(!pipeline.stages().is_empty());
+        let out = optimize_no_lexicon(Vec::new(), &pipeline);
         assert!(out.is_empty());
     }
 
     #[test]
-    fn pipeline_groups_are_well_ordered() {
-        let rules = RuleSet::all();
-        let groups: Vec<_> = rules.stages().iter().map(|s| s.group).collect();
+    fn pipeline_phases_are_well_ordered() {
+        let pipeline = Pipeline::analysis();
+        let phases: Vec<_> = pipeline.stages().iter().map(|s| s.phase).collect();
         // Sanity: pipeline starts with a Split and ends with a
         // Disambiguation, matching Jiten's macro-shape.
-        assert_eq!(groups.first(), Some(&StageGroup::Split));
-        assert_eq!(groups.last(), Some(&StageGroup::Disambiguation));
+        assert_eq!(phases.first(), Some(&Phase::Split));
+        assert_eq!(phases.last(), Some(&Phase::Disambiguation));
     }
 }

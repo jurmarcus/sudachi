@@ -5,14 +5,14 @@
 //! Sudachi's UniDic tokenization is correct for the dictionary but has
 //! known weaknesses around colloquial Japanese, fused particles, and
 //! compound auxiliary verbs. This crate runs a sequence of small,
-//! named transformations on the raw Sudachi token stream to produce
-//! a "post-optimised" stream that's better-suited for grammar / vocab
-//! span matching downstream.
+//! named transformations on the raw Sudachi morpheme stream to produce
+//! a "post-optimised" stream better-suited for grammar / vocab span
+//! matching downstream.
 //!
 //! ```text
-//! sudachi raw tokens → OPTIMIZER PIPELINE → post-optimised tokens
-//!                            ↓
-//!                    applied_rules tracked per token
+//! sudachi raw morphemes → OPTIMIZER PIPELINE → post-optimised morphemes
+//!                              ↓
+//!                     applied_rules tracked per morpheme
 //! ```
 //!
 //! ## The single Sudachi gateway
@@ -21,50 +21,53 @@
 //! sudachi-tantivy, sudachi-wasm) imports Sudachi types through
 //! [`sudachi`] (this crate's re-export module) — never the upstream
 //! `sudachi` crate directly. That gives us one place to apply the
-//! optimization rules so all consumers see the same canonical token
-//! stream.
+//! optimization rules so all consumers see the same canonical
+//! morpheme stream.
 //!
-//! ## Stage groups
+//! ## Phases
 //!
 //! Mirrors the categorization in
-//! [Jiten](https://github.com/Sirush/Jiten/tree/master/Jiten.Parser/Stages):
+//! [Sirush/Jiten Stages/](https://github.com/Sirush/Jiten/tree/master/Jiten.Parser/Stages):
 //!
-//! | Group           | Purpose                                              |
+//! | Phase           | Purpose                                              |
 //! |-----------------|------------------------------------------------------|
-//! | Split           | Break apart over-merged Sudachi tokens               |
+//! | Split           | Break apart over-merged Sudachi morphemes            |
 //! | Repair          | Fix specific known mis-tokenisations                 |
-//! | Combine         | Glue together tokens that should have been one       |
+//! | Combine         | Glue together morphemes that should have been one    |
 //! | Cleanup         | Reclassify orphans, filter misparses                 |
 //! | Disambiguation  | Fix reading ambiguity using neighbouring context     |
 //!
 //! ## Quick start
 //!
 //! ```ignore
-//! use sudachi_optimizer::{Tokenizer, RuleSet};
+//! use std::sync::Arc;
+//! use sudachi_optimizer::{Optimizer, Pipeline};
 //!
-//! let dict = sudachi_optimizer::load_dictionary("/path/to/system_full.dic")?;
-//! let tokenizer = Tokenizer::new(dict).with_rules(RuleSet::analysis());
-//! let tokens = tokenizer.tokenize("食べてしまった")?;
-//! // Post-optimization: ["食べて", "しまった"] (compound auxiliary recognised)
+//! let dict = Arc::new(sudachi_optimizer::load_dictionary("/path/to/system_full.dic")?);
+//! let optimizer = Optimizer::new(dict).with_pipeline(Pipeline::analysis());
+//! let morphemes = optimizer.tokenize("食べてしまった")?;
+//! for m in &morphemes {
+//!     println!("{}\t{}\t{:?}\t{:?}", m.surface, m.reading_form, m.pos, m.applied_rules);
+//! }
 //! ```
 //!
 //! ## Adding a new rule
 //!
-//! 1. Pick a category subdirectory (`split/`, `repair/`, `combine/`,
+//! 1. Pick a phase subdirectory (`split/`, `repair/`, `combine/`,
 //!    `cleanup/`, `disambiguation/`).
 //! 2. Add a new `<rule_name>.rs` file (one rule per file).
-//! 3. Define `pub fn apply<L: OptimizerLookup>(tokens: Vec<OptimizerToken>,
-//!    lookup: &L) -> Vec<OptimizerToken>`.
-//! 4. Register it in [`RuleSet::all`] with the right [`StageGroup`] and
-//!    [`TokenFeatures`] gate.
-//! 5. Write a unit test in the same file.
+//! 3. Define `pub fn apply(morphemes: Vec<Morpheme>, lexicon: &dyn Lexicon)
+//!    -> Vec<Morpheme>`.
+//! 4. Register it in [`pipeline::canonical_stages`] with the right
+//!    [`Phase`] and [`MorphemeFeatures`] gate.
+//! 5. Write unit tests in the same file.
 //!
 //! ## Source attribution
 //!
 //! Initial set of rules ported from
 //! [Sirush/Jiten](https://github.com/Sirush/Jiten) (MIT). Each rule's
-//! docstring links back to its C# original so future audits can verify
-//! behaviour.
+//! docstring links back to its C# original so future audits can
+//! verify behaviour.
 
 pub mod lookup;
 pub mod pipeline;
@@ -79,18 +82,18 @@ pub mod disambiguation;
 pub mod repair;
 pub mod split;
 
-mod tokenizer;
+mod optimizer;
 
-pub use lookup::{NoLookup, OptimizerLookup};
-pub use pipeline::{RuleSet, optimize_tokens};
-pub use stage::{Stage, StageGroup};
-pub use token::{OptimizerToken, SemanticPos};
-pub use token_features::TokenFeatures;
-pub use tokenizer::{TokenizeError, Tokenizer};
+pub use lookup::{EmptyLexicon, Lexicon};
+pub use optimizer::{OptimizeError, Optimizer};
+pub use pipeline::{Pipeline, optimize};
+pub use stage::{Phase, Stage};
+pub use token::{Morpheme, Pos};
+pub use token_features::MorphemeFeatures;
 
-/// Convenience: load a Sudachi dictionary from a system-dic path. Thin
-/// wrapper over upstream sudachi's loader to keep callers off the
-/// `sudachi` crate directly.
+/// Convenience: load a Sudachi dictionary from a system-dic path.
+/// Thin wrapper over upstream sudachi's loader so callers don't need
+/// to reach the `sudachi` crate directly.
 pub fn load_dictionary<P: AsRef<std::path::Path>>(
     system_dic_path: P,
 ) -> Result<sudachi::JapaneseDictionary, ::sudachi::error::SudachiError> {
