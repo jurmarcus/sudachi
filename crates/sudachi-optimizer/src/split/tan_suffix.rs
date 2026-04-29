@@ -47,7 +47,7 @@ pub fn stage() -> Stage {
     Stage::new(NAME, Phase::Split, MorphemeFeatures::TEXT_TAN_SUFFIX, apply)
 }
 
-pub fn apply(morphemes: Vec<Morpheme>, _lexicon: &dyn Lexicon) -> Vec<Morpheme> {
+pub fn apply(morphemes: Vec<Morpheme>, lexicon: &dyn Lexicon) -> Vec<Morpheme> {
     if morphemes.len() < 2 {
         return morphemes;
     }
@@ -73,12 +73,22 @@ pub fn apply(morphemes: Vec<Morpheme>, _lexicon: &dyn Lexicon) -> Vec<Morpheme> 
             continue;
         }
 
-        // Decide: does the prev morpheme end in て/で? That's the
-        // only branch we currently implement (deconjugator branch
-        // deferred — see module docs).
+        // Decide whether to split. Two paths:
+        //   1. prev ends in て/で (clear past-tense candidate; cheap
+        //      check).
+        //   2. lexicon's morphology oracle says prev+た is a valid
+        //      verb past tense (catches cases like 食べ + たんだ
+        //      where prev doesn't end in te/de).
         let prev = result.last().unwrap();
         let prev_last_char = prev.surface.chars().last();
-        let should_split = matches!(prev_last_char, Some('て') | Some('で'));
+        let prev_ends_in_te_de = matches!(prev_last_char, Some('て') | Some('で'));
+        let prev_plus_ta_is_verb_past = if !prev_ends_in_te_de {
+            let candidate = format!("{}た", prev.surface);
+            lexicon.is_valid_verb_past(&candidate)
+        } else {
+            false
+        };
+        let should_split = prev_ends_in_te_de || prev_plus_ta_is_verb_past;
 
         if !should_split {
             result.push(m.clone());
@@ -166,17 +176,36 @@ mod tests {
     }
 
     #[test]
-    fn no_split_when_prev_does_not_end_in_te_or_de() {
-        // Without the deconjugator port, prev ending in anything
-        // other than て/で must NOT trigger a split. Future
-        // deconjugator port will allow more cases.
+    fn splits_after_non_te_de_predecessor_when_morphology_validates() {
+        // 食べ + たん + だ → 食べた + ん + だ. Prev doesn't end in
+        // て/で, but the morphology oracle confirms 食べた is a
+        // valid v1 past tense → split.
         let prev = synth("食べ", "食べる", "動詞", 0..2);
         let tan = synth_sub("たん", "たん", &["接尾辞"], 2..4);
         let da = synth("だ", "だ", "助動詞", 4..5);
         let out = apply(vec![prev, tan, da], &EmptyLexicon);
 
         let surfaces: Vec<&str> = out.iter().map(|m| m.surface.as_str()).collect();
-        assert_eq!(surfaces, vec!["食べ", "たん", "だ"]);
+        assert_eq!(surfaces, vec!["食べた", "ん", "だ"]);
+    }
+
+    #[test]
+    fn no_split_when_strict_lexicon_rejects_verb_past() {
+        // With a strict (vocab-grounded) lexicon, 猫 + たん + だ
+        // doesn't split because 猫た isn't a known verb past.
+        struct StrictLexicon;
+        impl Lexicon for StrictLexicon {
+            fn is_valid_verb_past(&self, surface: &str) -> bool {
+                ["食べた", "書いた", "読んだ"].contains(&surface)
+            }
+        }
+        let prev = synth("猫", "猫", "名詞", 0..1);
+        let tan = synth_sub("たん", "たん", &["接尾辞"], 1..3);
+        let da = synth("だ", "だ", "助動詞", 3..4);
+        let out = apply(vec![prev, tan, da], &StrictLexicon);
+
+        let surfaces: Vec<&str> = out.iter().map(|m| m.surface.as_str()).collect();
+        assert_eq!(surfaces, vec!["猫", "たん", "だ"]);
     }
 
     #[test]

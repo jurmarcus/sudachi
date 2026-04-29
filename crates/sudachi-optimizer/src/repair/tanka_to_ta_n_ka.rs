@@ -44,7 +44,7 @@ pub fn stage() -> Stage {
     Stage::new(NAME, Phase::Repair, MorphemeFeatures::TEXT_TANKA, apply)
 }
 
-pub fn apply(morphemes: Vec<Morpheme>, _lexicon: &dyn Lexicon) -> Vec<Morpheme> {
+pub fn apply(morphemes: Vec<Morpheme>, lexicon: &dyn Lexicon) -> Vec<Morpheme> {
     let mut result: Vec<Morpheme> = Vec::with_capacity(morphemes.len() + 4);
 
     for (i, m) in morphemes.iter().enumerate() {
@@ -86,8 +86,21 @@ pub fn apply(morphemes: Vec<Morpheme>, _lexicon: &dyn Lexicon) -> Vec<Morpheme> 
             .last()
             .is_some_and(|c| c == 'て' || c == 'で');
 
-        if !prev_ends_in_te_de {
-            // Other patterns deferred — see module docs.
+        // Pattern (verb past tense): deconjugator says prev+た is a
+        // valid verb past tense. Use the lexicon's morphology
+        // oracle to validate without baking conjugation rules
+        // into the optimizer.
+        let prev_plus_ta_is_verb_past = if !prev_ends_in_te_de {
+            let candidate = format!("{}た", prev.surface);
+            lexicon.is_valid_verb_past(&candidate)
+        } else {
+            false
+        };
+
+        if !prev_ends_in_te_de && !prev_plus_ta_is_verb_past {
+            // Other patterns (Kansai もう / しもた) still deferred —
+            // they need multi-token merge logic beyond a simple
+            // verb-past validation.
             result.push(m.clone());
             continue;
         }
@@ -181,15 +194,48 @@ mod tests {
     }
 
     #[test]
-    fn skips_when_no_te_de_predecessor() {
-        // Without the deconjugator port, non-te/de predecessors are
-        // left alone.
+    fn splits_after_verb_past_validated_predecessor() {
+        // 云う stem 云 + たんか. After this rule, prev becomes 云った
+        // and we should split into 云った + ん + か since the
+        // morphology oracle confirms 云った is a valid verb past.
+        // Note: my deconjugator's coverage of v5u verbs makes this
+        // path active for prev = 云っ (te-form) which already ends
+        // in っ → wait, no, that ends in て. Let me pick a stem that
+        // doesn't end in て/で but that prev+た is recognised as
+        // valid past.
+        //
+        // 食べ + たんか: 食べた is a valid v1 past tense.
+        //   - te/de check: 食べ ends in べ — NOT te/de
+        //   - past check: lexicon.is_valid_verb_past("食べた") → true
+        //   - → split
         let prev = synth("食べ", "食べる", "動詞", 0..2);
         let tanka = synth("たんか", "短歌", "名詞", 2..5);
         let out = apply(vec![prev, tanka], &EmptyLexicon);
 
         let surfaces: Vec<&str> = out.iter().map(|m| m.surface.as_str()).collect();
-        assert_eq!(surfaces, vec!["食べ", "たんか"]);
+        assert_eq!(surfaces, vec!["食べた", "ん", "か"]);
+    }
+
+    #[test]
+    fn skips_when_strict_lexicon_rejects_verb_past() {
+        // 猫 + たんか — 猫た isn't a real verb past, but the
+        // morphology library's broad rule-matching does accept it
+        // (false positive). Real consumers ground their validator
+        // against a vocab catalog. Demonstrate with a strict
+        // Lexicon that says "only known verbs are valid".
+        struct VocabGroundedLexicon;
+        impl Lexicon for VocabGroundedLexicon {
+            fn is_valid_verb_past(&self, surface: &str) -> bool {
+                // Toy implementation: only known catalog hits.
+                ["食べた", "書いた", "読んだ", "走った"].contains(&surface)
+            }
+        }
+        let prev = synth("猫", "猫", "名詞", 0..1);
+        let tanka = synth("たんか", "短歌", "名詞", 1..4);
+        let out = apply(vec![prev, tanka], &VocabGroundedLexicon);
+
+        let surfaces: Vec<&str> = out.iter().map(|m| m.surface.as_str()).collect();
+        assert_eq!(surfaces, vec!["猫", "たんか"]);
     }
 
     #[test]
