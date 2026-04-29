@@ -153,6 +153,10 @@ pub enum Pos {
     Suffix,
     /// 代名詞 — pronoun (彼, 私, …).
     Pronoun,
+    /// 助数詞 — counter suffix (匹, 本, 個, …). Sudachi tags these
+    /// as Suffix with a 助数詞 sub-POS; some optimizer stages
+    /// re-classify into this distinct variant for clarity.
+    Counter,
     /// 記号 / 補助記号 — punctuation, markup.
     Symbol,
     /// 空白 — whitespace.
