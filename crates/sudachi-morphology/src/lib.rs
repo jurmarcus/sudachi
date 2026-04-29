@@ -55,14 +55,17 @@
 
 pub mod adjective;
 pub mod copula;
+pub mod deconjugate;
 pub mod irregular;
 pub mod kana;
+pub mod rule;
 pub mod tag;
 pub mod verb;
 pub mod verb_class;
 
 pub use adjective::{IAdjective, NaAdjective};
 pub use copula::{conjugate_copula, conjugate_explanatory, CopulaForm};
+pub use deconjugate::{deconjugate, deconjugate_with, Form};
 
 pub use tag::ConjForm;
 pub use verb::{Conjugated, Verb};
