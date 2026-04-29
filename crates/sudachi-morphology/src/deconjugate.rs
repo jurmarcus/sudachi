@@ -12,7 +12,7 @@
 //!    rules that would re-produce a seen text.
 //! 5. Length / depth / tag-density limits to keep the search bounded.
 
-use crate::rule::{Rule, RuleKind, load_default_rules};
+use crate::rule::{ContextKind, Rule, RuleKind, load_default_rules};
 
 /// One candidate deinflection of an input surface.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,32 +77,46 @@ pub fn deconjugate_with(input: &str, rules: &[Rule]) -> Vec<Form> {
     if input.is_empty() {
         return Vec::new();
     }
-    let mut queue: Vec<Form> = vec![Form::seed(input)];
-    let mut results: Vec<Form> = Vec::new();
+    use std::collections::HashSet;
+
+    let mut processed: Vec<Form> = vec![Form::seed(input)];
+    let mut novel: Vec<Form> = vec![Form::seed(input)];
+    let mut seen: HashSet<(String, Vec<String>, Vec<String>)> = HashSet::new();
+    seen.insert((input.to_string(), Vec::new(), Vec::new()));
 
     let mut iterations = 0;
-    const MAX_ITERATIONS: usize = 10_000;
+    const MAX_ITERATIONS: usize = 50_000;
 
-    while let Some(form) = queue.pop() {
-        iterations += 1;
-        if iterations > MAX_ITERATIONS {
-            break;
-        }
-
-        // Every form with at least one rule applied is a candidate.
-        // Caller filters by terminal tag.
-        if !form.process.is_empty() {
-            results.push(form.clone());
-        }
-
-        for rule in rules {
-            if let Some(new_form) = apply_rule(&form, rule) {
-                queue.push(new_form);
+    while !novel.is_empty() && iterations < MAX_ITERATIONS {
+        let mut new_novel: Vec<Form> = Vec::new();
+        for form in &novel {
+            for rule in rules {
+                iterations += 1;
+                if iterations >= MAX_ITERATIONS {
+                    break;
+                }
+                if let Some(new_form) = apply_rule(form, rule) {
+                    let key = (
+                        new_form.text.clone(),
+                        new_form.tags.clone(),
+                        new_form.process.clone(),
+                    );
+                    if seen.insert(key) {
+                        new_novel.push(new_form);
+                    }
+                }
             }
         }
+        processed.extend(novel.iter().cloned());
+        novel = new_novel;
     }
+    processed.extend(novel);
 
-    results
+    // Filter to forms that have actually had a rule applied.
+    processed
+        .into_iter()
+        .filter(|f| !f.process.is_empty())
+        .collect()
 }
 
 /// Try to apply one rule to one form. Returns the new form if it
@@ -130,9 +144,39 @@ fn apply_rule(form: &Form, rule: &Rule) -> Option<Form> {
     // Rule-kind chain-position guards (nazeka semantics):
     // OnlyFinal only fires as the first rule (when form.tags is empty);
     // NeverFinal only fires as a non-first rule (when form.tags is not).
+    // Context rules carry per-kind predicates (see JL Deconjugator.cs).
     match rule.kind {
         RuleKind::OnlyFinal if !form.tags.is_empty() => return None,
         RuleKind::NeverFinal if form.tags.is_empty() => return None,
+        RuleKind::Context(ContextKind::V1InfTrap) => {
+            // Block when form has exactly one tag and it's "stem-ren".
+            // Prevents the teru-stripping rule misfiring on what's
+            // actually a v1 verb's masu-stem form.
+            if form.tags.len() == 1 && form.tags[0] == "stem-ren" {
+                return None;
+            }
+        }
+        RuleKind::Context(ContextKind::SaSpecial) => {
+            // Block when the text portion before con_end ends in さ
+            // (would create double-さ in short causative).
+            if form.text.is_empty() {
+                return None;
+            }
+            let con_end_chars = rule.con_end.chars().count();
+            let text_chars = form.text.chars().count();
+            if text_chars < con_end_chars {
+                return None;
+            }
+            let prefix: String = form
+                .text
+                .chars()
+                .take(text_chars - con_end_chars)
+                .collect();
+            if prefix.ends_with('さ') {
+                return None;
+            }
+        }
+        RuleKind::Context(ContextKind::Other) => return None,
         _ => {}
     }
 
@@ -163,21 +207,21 @@ fn apply_rule(form: &Form, rule: &Rule) -> Option<Form> {
         }
     }
 
-    let prefix = &form.text[..form.text.len() - rule.con_end.len()];
-    let new_text = format!("{}{}", prefix, rule.dec_end);
-    // Cycle check: only reject when the rule actually CHANGES the
-    // text. Pure tag-transition rules (con_end="" + dec_end="" = no
-    // text change) MUST be allowed even when new_text == form.text,
-    // otherwise the stem-mizenkei → stem-a → v5r chain breaks.
-    if new_text != form.text && form.seen.contains(&new_text) {
+    // JL's anti-empty check: block rules that would consume the
+    // entire text without producing anything (text.len == con_end.len
+    // AND dec_end empty).
+    if form.text.len() == rule.con_end.len() && rule.dec_end.is_empty() {
         return None;
     }
 
+    let prefix = &form.text[..form.text.len() - rule.con_end.len()];
+    let new_text = format!("{}{}", prefix, rule.dec_end);
     let mut next = form.clone();
-    next.text = new_text.clone();
-    if new_text != form.text {
-        next.seen.push(new_text);
-    }
+    next.text = new_text;
+    // Drop the per-form seen-text cycle check — JL doesn't have one,
+    // relies on the bounds + new-novel duplicate check at the BFS
+    // layer + MAX_ITERATIONS cap. Forms with identical (text, tags,
+    // process) get deduplicated below.
     if !rule.detail.is_empty() {
         next.process.push(rule.detail.clone());
     }

@@ -76,13 +76,21 @@ pub enum RuleKind {
     Substitution,
 }
 
-/// Named context conditions that gate certain rules.
+/// Named context conditions that gate certain rules. Per JL's
+/// `ContextRuleDeconjugate` switch — see
+/// [`crate::deconjugate::apply_rule`] for the actual predicate
+/// implementations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextKind {
-    /// する's irregular short causative — fires only when the input
-    /// is the surface "さ" preceded by する's stem.
+    /// する's irregular short causative — blocks when the text
+    /// portion before `con_end` ends in さ (prevents double-さ in
+    /// compound short causatives).
     SaSpecial,
-    /// Other context kinds ported from Jiten-style extensions.
+    /// V1 infinitive trap — blocks the te-iru → te-ru contraction
+    /// rule when the form has exactly one tag and it's `stem-ren`
+    /// (otherwise misfires on what's actually a v1 verb's masu-stem).
+    V1InfTrap,
+    /// Other / unrecognised context kind. Loaded but never fires.
     Other,
 }
 
@@ -137,6 +145,7 @@ pub fn expand_rule(raw: &RawRule) -> Vec<Rule> {
         "substitution" => RuleKind::Substitution,
         "contextrule" => match raw.contextrule.as_deref() {
             Some("saspecial") => RuleKind::Context(ContextKind::SaSpecial),
+            Some("v1inftrap") => RuleKind::Context(ContextKind::V1InfTrap),
             _ => RuleKind::Context(ContextKind::Other),
         },
         other => panic!("unknown rule type: {}", other),
