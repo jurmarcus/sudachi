@@ -1,0 +1,17 @@
+[package]
+name = "sudachi-morphology"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Bidirectional Japanese morphology — verb / adjective / copula conjugation forward, rule-table deconjugation backward, irregular handling, slang and dialect coverage"
+keywords = ["japanese", "conjugation", "deconjugation", "morphology", "nlp"]
+categories = ["text-processing", "internationalization"]
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/sudachi-morphology",
     "crates/sudachi-optimizer",
     "crates/sudachi-search",
     "crates/sudachi-sqlite",
@@ -28,6 +29,7 @@ sudachi = { git = "https://github.com/jurmarcus/sudachi.rs", rev = "a7c50e44c98b
 # imports through sudachi-optimizer's re-exports so post-tokenisation rules
 # can apply uniformly across all consumers.
 sudachi = { git = "https://github.com/WorksApplications/sudachi.rs", rev = "b568decbbd4ea209dec847821dc1f5069a0f2ff5" }
+sudachi-morphology = { path = "crates/sudachi-morphology" }
 sudachi-optimizer = { path = "crates/sudachi-optimizer" }
 sudachi-search = { path = "crates/sudachi-search" }
 libc = { version = "0.2", default-features = false }
