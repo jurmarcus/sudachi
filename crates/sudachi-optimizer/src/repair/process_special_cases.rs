@@ -49,7 +49,7 @@ pub fn stage() -> Stage {
     Stage::new(NAME, Phase::Repair, MorphemeFeatures::empty(), apply)
 }
 
-pub fn apply(morphemes: Vec<Morpheme>, _lexicon: &dyn Lexicon) -> Vec<Morpheme> {
+pub fn apply(morphemes: Vec<Morpheme>, lexicon: &dyn Lexicon) -> Vec<Morpheme> {
     if morphemes.is_empty() {
         return morphemes;
     }
@@ -213,6 +213,40 @@ pub fn apply(morphemes: Vec<Morpheme>, _lexicon: &dyn Lexicon) -> Vec<Morpheme> 
             }
         }
 
+        // Sudachi sometimes classifies verb te-forms ending in
+        // んで/んだ as Expression (Pos::Other) when a JMDict
+        // expression entry exists for the surface. Reclassify as
+        // Verb when the morphology oracle confirms the surface is a
+        // valid v5b/v5m/v5n/v5g past tense (those are the verb
+        // classes whose past form ends in んだ).
+        let is_expression = matches!(w.pos, Pos::Other);
+        let chars_count = w.surface.chars().count();
+        if is_expression
+            && chars_count >= 3
+            && (w.surface.ends_with("んで") || w.surface.ends_with("んだ"))
+            && lexicon.is_verb_of_class(&w.surface, &["v5b", "v5m", "v5n", "v5g"])
+        {
+            // Find the candidate's dict form (we know it's a verb of
+            // one of these classes; use the deconjugator's first
+            // matching candidate).
+            let forms = lexicon.lookup_conjugated_form(&w.surface);
+            if let Some(verb_form) = forms.iter().find(|f| {
+                f.tags.last().is_some_and(|t| {
+                    matches!(t.as_str(), "v5b" | "v5m" | "v5n" | "v5g")
+                })
+            }) {
+                let mut rebrand = w.clone();
+                rebrand.pos = Pos::Verb;
+                rebrand.part_of_speech = vec!["動詞".into()];
+                rebrand.dictionary_form = verb_form.text.clone();
+                rebrand.normalized_form = verb_form.text.clone();
+                rebrand.record_rule(NAME);
+                out.push(rebrand);
+                i += 1;
+                continue;
+            }
+        }
+
         out.push(w.clone());
         i += 1;
     }
@@ -316,5 +350,28 @@ mod tests {
         let out = apply(vec![o], &EmptyLexicon);
         let surfaces: Vec<&str> = out.iter().map(|m| m.surface.as_str()).collect();
         assert_eq!(surfaces, vec!["おけ", "ば", "いい"]);
+    }
+
+    #[test]
+    fn rebrands_nde_nda_expression_to_verb_when_morphology_validates() {
+        // 飛んで as a JMDict expression entry → reclassify as Verb
+        // since 飛んで is the te-form of 飛ぶ (v5b).
+        let mut tonde = synth("飛んで", "飛んで", "連語", 0..3);
+        tonde.pos = Pos::Other;
+        let out = apply(vec![tonde], &EmptyLexicon);
+        // Reclassified to Verb with proper dict form.
+        assert!(matches!(out[0].pos, Pos::Verb));
+        assert_eq!(out[0].dictionary_form, "飛ぶ");
+    }
+
+    #[test]
+    fn does_not_rebrand_short_nde_strings() {
+        // Strings shorter than 3 chars don't qualify (filter on
+        // chars_count >= 3).
+        let mut nde = synth("んで", "んで", "連語", 0..2);
+        nde.pos = Pos::Other;
+        let out = apply(vec![nde], &EmptyLexicon);
+        // Unchanged.
+        assert!(matches!(out[0].pos, Pos::Other));
     }
 }

@@ -54,12 +54,12 @@ pub fn stage() -> Stage {
     Stage::new(NAME, Phase::Repair, MorphemeFeatures::empty(), apply)
 }
 
-pub fn apply(morphemes: Vec<Morpheme>, _lexicon: &dyn Lexicon) -> Vec<Morpheme> {
+pub fn apply(morphemes: Vec<Morpheme>, lexicon: &dyn Lexicon) -> Vec<Morpheme> {
     // Phase 1 can split a single morpheme (んだ → ん + だ; そうだ → そう + だ).
     // Phase 2 needs at least 2 morphemes to look ahead but a no-op
     // pass on a 1-morpheme list is fine.
     let split = phase_one_split(morphemes);
-    phase_two_recombine(split)
+    phase_two_recombine(split, lexicon)
 }
 
 fn phase_one_split(morphemes: Vec<Morpheme>) -> Vec<Morpheme> {
@@ -143,7 +143,7 @@ fn phase_one_split(morphemes: Vec<Morpheme>) -> Vec<Morpheme> {
     out
 }
 
-fn phase_two_recombine(split: Vec<Morpheme>) -> Vec<Morpheme> {
+fn phase_two_recombine(split: Vec<Morpheme>, lexicon: &dyn Lexicon) -> Vec<Morpheme> {
     let mut result: Vec<Morpheme> = Vec::with_capacity(split.len());
     let mut i = 0;
     while i < split.len() {
@@ -174,6 +174,48 @@ fn phase_two_recombine(split: Vec<Morpheme>) -> Vec<Morpheme> {
             result.push(merged);
             i += 2;
             continue;
+        }
+
+        // Standalone ん look-back: when current is just "ん" and we
+        // have a previous morpheme already in result + a だ/で
+        // following, try to combine prev + ん + da/de into a verb
+        // form. The lexicon validates `prev + ん + da/de` as a real
+        // verb past tense; without confirmation we don't combine
+        // (would produce false-positive verb tokens).
+        if current.surface == "ん"
+            && next.is_some_and(|n| n.surface == "だ" || n.surface == "で")
+            && !result.is_empty()
+        {
+            let next = next.unwrap();
+            let prev_idx = result.len() - 1;
+            let prev = &result[prev_idx];
+            // Only attempt look-back from kanji/noun-like predecessors;
+            // pure particles or stems aren't candidates.
+            let prev_is_candidate = matches!(
+                prev.pos,
+                Pos::Noun | Pos::Verb | Pos::Adjective | Pos::AdjectivalNoun
+            );
+            if prev_is_candidate {
+                let candidate = format!("{}{}{}", prev.surface, current.surface, next.surface);
+                if lexicon.is_valid_verb_past(&candidate) {
+                    let combined_reading = format!(
+                        "{}{}{}",
+                        prev.reading_form, current.reading_form, next.reading_form
+                    );
+                    let mut merged = prev.clone();
+                    merged.surface = candidate.clone();
+                    merged.normalized_form = candidate;
+                    merged.reading_form = combined_reading;
+                    merged.pos = Pos::Verb;
+                    merged.part_of_speech = vec!["動詞".into()];
+                    merged.char_range =
+                        prev.char_range.start..next.char_range.end;
+                    merged.record_rule(NAME);
+                    result[prev_idx] = merged;
+                    i += 2; // consume current ん + next da/de
+                    continue;
+                }
+            }
         }
 
         result.push(current.clone());
@@ -267,5 +309,43 @@ mod tests {
         let out = apply(vec![takusan, de], &EmptyLexicon);
         let surfaces: Vec<&str> = out.iter().map(|m| m.surface.as_str()).collect();
         assert_eq!(surfaces, vec!["たくさん", "で"]);
+    }
+
+    #[test]
+    fn standalone_n_lookback_combines_when_morphology_validates() {
+        // Phase 1 has already split the input into [喜, ん, だ].
+        // Phase 2 standalone-ん look-back: 喜 (noun-like) + ん + だ
+        // → 喜んだ if morphology says yes. Use a strict mock to make
+        // the test deterministic against a known-vocab lexicon.
+        struct StrictPastLexicon;
+        impl Lexicon for StrictPastLexicon {
+            fn is_valid_verb_past(&self, surface: &str) -> bool {
+                ["喜んだ", "読んだ", "飲んだ"].contains(&surface)
+            }
+        }
+        let yorokobi = synth("喜", "喜", "名詞", 0..1);
+        let n = synth("ん", "ん", "助動詞", 1..2);
+        let da = synth("だ", "だ", "助動詞", 2..3);
+        let out = apply(vec![yorokobi, n, da], &StrictPastLexicon);
+        let surfaces: Vec<&str> = out.iter().map(|m| m.surface.as_str()).collect();
+        assert_eq!(surfaces, vec!["喜んだ"]);
+        assert!(matches!(out[0].pos, Pos::Verb));
+    }
+
+    #[test]
+    fn standalone_n_lookback_skips_when_morphology_rejects() {
+        // 猫 + ん + だ — 猫んだ isn't a verb past.
+        struct StrictPastLexicon;
+        impl Lexicon for StrictPastLexicon {
+            fn is_valid_verb_past(&self, surface: &str) -> bool {
+                ["読んだ", "飲んだ"].contains(&surface)
+            }
+        }
+        let neko = synth("猫", "猫", "名詞", 0..1);
+        let n = synth("ん", "ん", "助動詞", 1..2);
+        let da = synth("だ", "だ", "助動詞", 2..3);
+        let out = apply(vec![neko, n, da], &StrictPastLexicon);
+        let surfaces: Vec<&str> = out.iter().map(|m| m.surface.as_str()).collect();
+        assert_eq!(surfaces, vec!["猫", "ん", "だ"]);
     }
 }
