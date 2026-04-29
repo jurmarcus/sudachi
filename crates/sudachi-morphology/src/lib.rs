@@ -77,3 +77,34 @@ pub enum Polite {
     Plain,
     Polite,
 }
+
+/// Honorific prefix selection for keigo constructions
+/// ([`Verb::honorific_oninaru`] + [`Verb::humble_osuru`]).
+///
+/// Japanese keigo prefixes the verb with `お` for native-vocabulary
+/// (wago) verbs and `ご` for Sino-Japanese (kango) verbs:
+/// `お読みになる`, `お書きする` (wago) vs. `ご説明になる`,
+/// `ご報告する` (kango).
+///
+/// The crate's plain `honorific_oninaru()` and `humble_osuru()`
+/// default to `O` since wago verbs are the more common case.
+/// Vocab-aware callers should use the `_with_prefix()` variants
+/// and pass the right prefix per their dictionary knowledge
+/// (jisho-core does this via its vocab catalog).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HonorificPrefix {
+    /// `お` — for native-vocabulary (wago) verbs.
+    O,
+    /// `ご` — for Sino-Japanese (kango) verbs.
+    Go,
+}
+
+impl HonorificPrefix {
+    /// The kana surface of this prefix (`"お"` or `"ご"`).
+    pub fn surface(self) -> &'static str {
+        match self {
+            Self::O => "お",
+            Self::Go => "ご",
+        }
+    }
+}

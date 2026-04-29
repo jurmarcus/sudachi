@@ -224,3 +224,93 @@ fn desiderative_round_trip() {
     round_trip("食べる", VerbClass::Ichidan, ConjForm::Desiderative);
     round_trip("書く", VerbClass::GodanKu, ConjForm::Desiderative);
 }
+
+// ─── Past variants ──────────────────────────────────────────────────
+
+#[test]
+fn past_tara_alias_round_trip() {
+    // PastTara is alias for ConditionalTara; same surface, deconjugates
+    // back identically.
+    round_trip("食べる", VerbClass::Ichidan, ConjForm::PastTara);
+}
+
+#[test]
+fn past_tari_round_trip() {
+    round_trip("食べる", VerbClass::Ichidan, ConjForm::PastTari);
+    round_trip("書く", VerbClass::GodanKu, ConjForm::PastTari);
+    round_trip("読む", VerbClass::GodanMu, ConjForm::PastTari);
+}
+
+// ─── Negative variants ──────────────────────────────────────────────
+
+#[test]
+fn negative_classical_round_trip() {
+    // ぬ — classical negative; deconjugator recognises ぬ as
+    // archaic-negative in nazeka's onlyfinalrule.
+    round_trip("食べる", VerbClass::Ichidan, ConjForm::NegativeNu);
+    round_trip("書く", VerbClass::GodanKu, ConjForm::NegativeNu);
+}
+
+#[test]
+fn negative_zu_round_trip() {
+    round_trip("書く", VerbClass::GodanKu, ConjForm::NegativeZu);
+    round_trip("食べる", VerbClass::Ichidan, ConjForm::NegativeZu);
+}
+
+#[test]
+fn negative_without_doing_round_trip() {
+    round_trip("書く", VerbClass::GodanKu, ConjForm::NegativeWithoutDoing);
+    round_trip("食べる", VerbClass::Ichidan, ConjForm::NegativeWithoutDoing);
+}
+
+// ─── Volitional / imperative extensions ─────────────────────────────
+
+#[test]
+fn volitional_negative_round_trip() {
+    // まい — onlyfinalrule "negative conjectural" in nazeka.
+    round_trip("食べる", VerbClass::Ichidan, ConjForm::VolitionalNegative);
+    round_trip("行く", VerbClass::GodanKuIku, ConjForm::VolitionalNegative);
+}
+
+#[test]
+fn imperative_negative_round_trip() {
+    // 〜な — onlyfinalrule "imperative negative" in nazeka.
+    round_trip("食べる", VerbClass::Ichidan, ConjForm::ImperativeNegative);
+    round_trip("書く", VerbClass::GodanKu, ConjForm::ImperativeNegative);
+}
+
+// ─── Voice extensions ───────────────────────────────────────────────
+
+#[test]
+fn causative_short_round_trip() {
+    // Short causative produces a v5s verb (書かす, 読ます).
+    round_trip("書く", VerbClass::GodanKu, ConjForm::CausativeShort);
+    round_trip("読む", VerbClass::GodanMu, ConjForm::CausativeShort);
+}
+
+#[test]
+fn potential_negative_round_trip() {
+    // 書けない (e-stem + ない) → 書く (v5k) via potential + negative chain.
+    round_trip("書く", VerbClass::GodanKu, ConjForm::PotentialNegative);
+    round_trip("読む", VerbClass::GodanMu, ConjForm::PotentialNegative);
+    round_trip("食べる", VerbClass::Ichidan, ConjForm::PotentialNegative);
+}
+
+// Note on forms NOT covered by round-trip:
+//
+// - Hearsay/HearsayPolite (verb+そうだ): nazeka's そう rule attaches
+//   to stem-renyou (v1 stem) for "seemingness" (= our Appearance),
+//   not to dict form for "hearsay". The deconjugator can't recover
+//   the original verb from "食べるそうだ" since the rule chain expects
+//   そう after stem.
+// - Conjectural (verb+だろう): nazeka recognises だろう only after
+//   cop, not after dict-form verbs.
+// - HonorificOninaru / HumbleOsuru: multi-word constructions, not in
+//   the deinflector's surface-pattern scope.
+// - Explanatory (のだ): rule-table treats のだ as a separate copula
+//   unit, not a per-verb derivation.
+//
+// These are forward-only forms — the deconjugator either recognises
+// them through different rule chains (so the simple "produces this
+// exact dict form" check would fail) or doesn't model them at all.
+// The unit tests in src/verb.rs verify forward correctness.

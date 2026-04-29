@@ -166,8 +166,19 @@ pub enum ConjForm {
     Recommendation,
     /// Hearsay — そうだ (after dictionary form).
     Hearsay,
-    /// Appearance — そうだ (after stem) / みたいだ / らしい.
+    /// Polite hearsay — そうです (after dictionary form).
+    HearsayPolite,
+    /// Appearance — そうだ (after stem for verbs / kanji-only stem
+    /// for adjectives — drops trailing い/だ).
     Appearance,
+    /// Polite appearance — そうです (after stem).
+    AppearancePolite,
+    /// Looks like — verb dict + みたいだ ("seems like").
+    SeemsLike,
+    /// Polite SeemsLike — みたいです.
+    SeemsLikePolite,
+    /// Reportedly — verb dict + らしい ("apparently / I hear").
+    Reportedly,
 
     // ─── Honorific / humble (keigo registers as full forms) ─────────
     /// Honorific construction — お〜になる.

@@ -178,6 +178,119 @@ impl IAdjective {
         }
     }
 
+    // ─── Modal compounds (i-adj) ─────────────────────────────────────
+
+    /// Conjectural — dict + だろう (高いだろう "probably tall").
+    pub fn conjectural(&self) -> Conjugated {
+        Conjugated {
+            surface: format!("{}だろう", self.dict_form),
+            form: ConjForm::Conjectural,
+        }
+    }
+
+    /// Polite conjectural — dict + でしょう (高いでしょう).
+    pub fn conjectural_polite(&self) -> Conjugated {
+        Conjugated {
+            surface: format!("{}でしょう", self.dict_form),
+            form: ConjForm::ConjecturalPolite,
+        }
+    }
+
+    /// Hearsay — dict + そうだ (高いそうだ "I heard it's tall").
+    /// Distinct from Appearance — Hearsay attaches to the FULL dict
+    /// form (with trailing い); Appearance drops the い.
+    pub fn hearsay(&self) -> Conjugated {
+        Conjugated {
+            surface: format!("{}そうだ", self.dict_form),
+            form: ConjForm::Hearsay,
+        }
+    }
+
+    /// Polite hearsay — dict + そうです.
+    pub fn hearsay_polite(&self) -> Conjugated {
+        Conjugated {
+            surface: format!("{}そうです", self.dict_form),
+            form: ConjForm::HearsayPolite,
+        }
+    }
+
+    /// Appearance — STEM (drops い) + そうだ (高そうだ "looks tall").
+    /// Note: i-adj appearance differs from verb appearance — for
+    /// adjectives we drop the い; for verbs we use the masu-stem.
+    pub fn appearance(&self) -> Conjugated {
+        let stem = if self.is_ii_special() {
+            // よ-stem variant: いい/良い → よさそうだ (irregular).
+            "よさ".to_string()
+        } else {
+            self.stem()
+        };
+        Conjugated {
+            surface: format!("{}そうだ", stem),
+            form: ConjForm::Appearance,
+        }
+    }
+
+    /// Polite appearance — stem + そうです.
+    pub fn appearance_polite(&self) -> Conjugated {
+        let stem = if self.is_ii_special() {
+            "よさ".to_string()
+        } else {
+            self.stem()
+        };
+        Conjugated {
+            surface: format!("{}そうです", stem),
+            form: ConjForm::AppearancePolite,
+        }
+    }
+
+    /// Looks-like — dict + みたいだ (高いみたいだ).
+    pub fn seems_like(&self) -> Conjugated {
+        Conjugated {
+            surface: format!("{}みたいだ", self.dict_form),
+            form: ConjForm::SeemsLike,
+        }
+    }
+
+    /// Polite seems-like — dict + みたいです.
+    pub fn seems_like_polite(&self) -> Conjugated {
+        Conjugated {
+            surface: format!("{}みたいです", self.dict_form),
+            form: ConjForm::SeemsLikePolite,
+        }
+    }
+
+    /// Reportedly — dict + らしい (高いらしい).
+    pub fn reportedly(&self) -> Conjugated {
+        Conjugated {
+            surface: format!("{}らしい", self.dict_form),
+            form: ConjForm::Reportedly,
+        }
+    }
+
+    /// Permission — te-form + もいい (高くてもいい).
+    pub fn permission(&self) -> Conjugated {
+        Conjugated {
+            surface: format!("{}もいい", self.te_form().surface),
+            form: ConjForm::Permission,
+        }
+    }
+
+    /// Prohibition — te-form + はいけない (高くてはいけない).
+    pub fn prohibition(&self) -> Conjugated {
+        Conjugated {
+            surface: format!("{}はいけない", self.te_form().surface),
+            form: ConjForm::Prohibition,
+        }
+    }
+
+    /// Obligation — neg-stem + ければならない (高くなければならない).
+    pub fn obligation(&self) -> Conjugated {
+        Conjugated {
+            surface: format!("{}くなければならない", self.stem()),
+            form: ConjForm::Obligation,
+        }
+    }
+
     pub fn conjugate(&self, form: ConjForm) -> Option<Conjugated> {
         Some(match form {
             ConjForm::Dictionary => self.dictionary(),
@@ -193,6 +306,18 @@ impl IAdjective {
             ConjForm::PolitePast => self.polite_past(),
             ConjForm::PoliteNegative => self.polite_negative(),
             ConjForm::PoliteNegativePast => self.polite_negative_past(),
+            ConjForm::Conjectural => self.conjectural(),
+            ConjForm::ConjecturalPolite => self.conjectural_polite(),
+            ConjForm::Hearsay => self.hearsay(),
+            ConjForm::HearsayPolite => self.hearsay_polite(),
+            ConjForm::Appearance => self.appearance(),
+            ConjForm::AppearancePolite => self.appearance_polite(),
+            ConjForm::SeemsLike => self.seems_like(),
+            ConjForm::SeemsLikePolite => self.seems_like_polite(),
+            ConjForm::Reportedly => self.reportedly(),
+            ConjForm::Permission => self.permission(),
+            ConjForm::Prohibition => self.prohibition(),
+            ConjForm::Obligation => self.obligation(),
             _ => return None,
         })
     }
@@ -299,6 +424,85 @@ impl NaAdjective {
         }
     }
 
+    // ─── Modal compounds (na-adj) ────────────────────────────────────
+
+    /// Conjectural — stem + だろう (好きだろう).
+    pub fn conjectural(&self) -> Conjugated {
+        Conjugated {
+            surface: format!("{}だろう", self.stem),
+            form: ConjForm::Conjectural,
+        }
+    }
+
+    /// Polite conjectural — stem + でしょう (好きでしょう).
+    pub fn conjectural_polite(&self) -> Conjugated {
+        Conjugated {
+            surface: format!("{}でしょう", self.stem),
+            form: ConjForm::ConjecturalPolite,
+        }
+    }
+
+    /// Hearsay — predicative (stem + だ) + そうだ (好きだそうだ).
+    /// For na-adj the predicative だ is required because そうだ
+    /// attaches to a complete predicate.
+    pub fn hearsay(&self) -> Conjugated {
+        Conjugated {
+            surface: format!("{}だそうだ", self.stem),
+            form: ConjForm::Hearsay,
+        }
+    }
+
+    /// Polite hearsay — stem + だそうです.
+    pub fn hearsay_polite(&self) -> Conjugated {
+        Conjugated {
+            surface: format!("{}だそうです", self.stem),
+            form: ConjForm::HearsayPolite,
+        }
+    }
+
+    /// Appearance — stem (no だ) + そうだ (好きそうだ "looks like
+    /// they like it"). Na-adj appearance drops the だ.
+    pub fn appearance(&self) -> Conjugated {
+        Conjugated {
+            surface: format!("{}そうだ", self.stem),
+            form: ConjForm::Appearance,
+        }
+    }
+
+    /// Polite appearance — stem + そうです.
+    pub fn appearance_polite(&self) -> Conjugated {
+        Conjugated {
+            surface: format!("{}そうです", self.stem),
+            form: ConjForm::AppearancePolite,
+        }
+    }
+
+    /// Looks-like — attributive (stem + な) + みたいだ
+    /// (静かなみたいだ). The な is required since みたい takes
+    /// adnominal modification.
+    pub fn seems_like(&self) -> Conjugated {
+        Conjugated {
+            surface: format!("{}みたいだ", self.stem),
+            form: ConjForm::SeemsLike,
+        }
+    }
+
+    /// Polite seems-like — stem + みたいです.
+    pub fn seems_like_polite(&self) -> Conjugated {
+        Conjugated {
+            surface: format!("{}みたいです", self.stem),
+            form: ConjForm::SeemsLikePolite,
+        }
+    }
+
+    /// Reportedly — stem + らしい (好きらしい).
+    pub fn reportedly(&self) -> Conjugated {
+        Conjugated {
+            surface: format!("{}らしい", self.stem),
+            form: ConjForm::Reportedly,
+        }
+    }
+
     pub fn conjugate(&self, form: ConjForm) -> Option<Conjugated> {
         Some(match form {
             ConjForm::Dictionary => self.dictionary(),
@@ -310,6 +514,15 @@ impl NaAdjective {
             ConjForm::NegativePast => self.negative_past(),
             ConjForm::PolitePast => self.polite_past(),
             ConjForm::PoliteNegative => self.polite_negative(),
+            ConjForm::Conjectural => self.conjectural(),
+            ConjForm::ConjecturalPolite => self.conjectural_polite(),
+            ConjForm::Hearsay => self.hearsay(),
+            ConjForm::HearsayPolite => self.hearsay_polite(),
+            ConjForm::Appearance => self.appearance(),
+            ConjForm::AppearancePolite => self.appearance_polite(),
+            ConjForm::SeemsLike => self.seems_like(),
+            ConjForm::SeemsLikePolite => self.seems_like_polite(),
+            ConjForm::Reportedly => self.reportedly(),
             _ => return None,
         })
     }
@@ -385,5 +598,74 @@ mod tests {
     fn na_adj_negative_formal_variant() {
         let suki = NaAdjective::new("好き");
         assert_eq!(suki.negative_formal().surface, "好きではない");
+    }
+
+    // ─── Modal compounds (i-adj) ─────────────────────────────────────
+
+    #[test]
+    fn iadj_conjectural_attaches_to_dict() {
+        check_iadj("高い", ConjForm::Conjectural, "高いだろう");
+        check_iadj("高い", ConjForm::ConjecturalPolite, "高いでしょう");
+        check_iadj("いい", ConjForm::Conjectural, "いいだろう"); // dict form, not yo-stem
+    }
+
+    #[test]
+    fn iadj_hearsay_keeps_i_appearance_drops_it() {
+        // Hearsay attaches to FULL dict form (with い):
+        check_iadj("高い", ConjForm::Hearsay, "高いそうだ");
+        check_iadj("高い", ConjForm::HearsayPolite, "高いそうです");
+        // Appearance drops the い (uses kanji-only stem):
+        check_iadj("高い", ConjForm::Appearance, "高そうだ");
+        check_iadj("高い", ConjForm::AppearancePolite, "高そうです");
+    }
+
+    #[test]
+    fn iadj_appearance_uses_yosa_for_ii_irregularly() {
+        // いい → よさそうだ (irregular: よ-stem with さ inserted).
+        check_iadj("いい", ConjForm::Appearance, "よさそうだ");
+        check_iadj("いい", ConjForm::AppearancePolite, "よさそうです");
+        check_iadj("良い", ConjForm::Appearance, "よさそうだ");
+    }
+
+    #[test]
+    fn iadj_seems_like_and_reportedly() {
+        check_iadj("高い", ConjForm::SeemsLike, "高いみたいだ");
+        check_iadj("高い", ConjForm::SeemsLikePolite, "高いみたいです");
+        check_iadj("高い", ConjForm::Reportedly, "高いらしい");
+    }
+
+    #[test]
+    fn iadj_modal_compounds() {
+        check_iadj("高い", ConjForm::Permission, "高くてもいい");
+        check_iadj("高い", ConjForm::Prohibition, "高くてはいけない");
+        check_iadj("高い", ConjForm::Obligation, "高くなければならない");
+    }
+
+    // ─── Modal compounds (na-adj) ────────────────────────────────────
+
+    #[test]
+    fn naadj_conjectural() {
+        check_naadj("好き", ConjForm::Conjectural, "好きだろう");
+        check_naadj("好き", ConjForm::ConjecturalPolite, "好きでしょう");
+    }
+
+    #[test]
+    fn naadj_hearsay_requires_da_predicative() {
+        // Na-adj hearsay attaches to predicative (stem+だ) +そうだ:
+        check_naadj("好き", ConjForm::Hearsay, "好きだそうだ");
+        check_naadj("好き", ConjForm::HearsayPolite, "好きだそうです");
+    }
+
+    #[test]
+    fn naadj_appearance_drops_da() {
+        // Appearance: stem (no だ) + そうだ
+        check_naadj("好き", ConjForm::Appearance, "好きそうだ");
+        check_naadj("静か", ConjForm::Appearance, "静かそうだ");
+    }
+
+    #[test]
+    fn naadj_seems_like_and_reportedly() {
+        check_naadj("好き", ConjForm::SeemsLike, "好きみたいだ");
+        check_naadj("好き", ConjForm::Reportedly, "好きらしい");
     }
 }

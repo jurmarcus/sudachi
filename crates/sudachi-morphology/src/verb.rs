@@ -40,6 +40,7 @@
 use crate::kana::{append, replace_last_char, shift_godan_terminal, split_last_char, VowelRow};
 use crate::tag::ConjForm;
 use crate::verb_class::VerbClass;
+use crate::HonorificPrefix;
 
 /// A Japanese verb identified by its dictionary form + paradigm
 /// class. All conjugation methods return owned `Conjugated` values.
@@ -804,6 +805,14 @@ impl Verb {
         }
     }
 
+    /// Polite hearsay — dict + そうです (行くそうです).
+    pub fn hearsay_polite(&self) -> Conjugated {
+        Conjugated {
+            surface: append(&self.dict_form, "そうです"),
+            form: ConjForm::HearsayPolite,
+        }
+    }
+
     /// Appearance — i-stem + そうだ (行きそうだ "looks like he's
     /// going"). Distinct from Hearsay — see [`Self::hearsay`].
     pub fn appearance(&self) -> Conjugated {
@@ -813,25 +822,75 @@ impl Verb {
         }
     }
 
+    /// Polite appearance — i-stem + そうです (行きそうです).
+    pub fn appearance_polite(&self) -> Conjugated {
+        Conjugated {
+            surface: append(&self.stem_renyou(), "そうです"),
+            form: ConjForm::AppearancePolite,
+        }
+    }
+
+    /// Looks-like — dict + みたいだ (行くみたいだ "seems like
+    /// he's going"). Less formal than Hearsay; speaker's inference.
+    pub fn seems_like(&self) -> Conjugated {
+        Conjugated {
+            surface: append(&self.dict_form, "みたいだ"),
+            form: ConjForm::SeemsLike,
+        }
+    }
+
+    /// Polite seems-like — dict + みたいです.
+    pub fn seems_like_polite(&self) -> Conjugated {
+        Conjugated {
+            surface: append(&self.dict_form, "みたいです"),
+            form: ConjForm::SeemsLikePolite,
+        }
+    }
+
+    /// Reportedly — dict + らしい ("apparently / I hear that").
+    /// Slightly more reliable than みたい; based on hearsay.
+    pub fn reportedly(&self) -> Conjugated {
+        Conjugated {
+            surface: append(&self.dict_form, "らしい"),
+            form: ConjForm::Reportedly,
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────────
     // Honorific / humble (keigo)
     // ─────────────────────────────────────────────────────────────────
 
     /// Honorific construction — お + i-stem + になる (お読みになる).
-    /// Note: this is the construction; the actual NOUN-stem requires
-    /// vocab-specific knowledge for which honorific prefix お/ご
-    /// applies.
+    /// Defaults to the お prefix (wago verbs are the common case).
+    /// For Sino-Japanese (kango) verbs, use
+    /// [`Self::honorific_oninaru_with_prefix`] with [`HonorificPrefix::Go`].
     pub fn honorific_oninaru(&self) -> Conjugated {
+        self.honorific_oninaru_with_prefix(HonorificPrefix::O)
+    }
+
+    /// Honorific construction with explicit prefix selection.
+    /// Use [`HonorificPrefix::O`] for native (wago) verbs and
+    /// [`HonorificPrefix::Go`] for Sino-Japanese (kango) — e.g.,
+    /// ご説明になる, ご報告になる.
+    pub fn honorific_oninaru_with_prefix(&self, prefix: HonorificPrefix) -> Conjugated {
         Conjugated {
-            surface: format!("お{}になる", self.stem_renyou()),
+            surface: format!("{}{}になる", prefix.surface(), self.stem_renyou()),
             form: ConjForm::HonorificOninaru,
         }
     }
 
     /// Humble construction — お + i-stem + する (お読みする).
+    /// Defaults to お; see [`Self::humble_osuru_with_prefix`].
     pub fn humble_osuru(&self) -> Conjugated {
+        self.humble_osuru_with_prefix(HonorificPrefix::O)
+    }
+
+    /// Humble construction with explicit prefix selection.
+    /// Use [`HonorificPrefix::Go`] for kango verbs (ご報告する,
+    /// ご説明する).
+    pub fn humble_osuru_with_prefix(&self, prefix: HonorificPrefix) -> Conjugated {
         Conjugated {
-            surface: format!("お{}する", self.stem_renyou()),
+            surface: format!("{}{}する", prefix.surface(), self.stem_renyou()),
             form: ConjForm::HumbleOsuru,
         }
     }
@@ -957,7 +1016,12 @@ impl Verb {
             ConjForm::Prohibition => self.prohibition(),
             ConjForm::Recommendation => self.recommendation(),
             ConjForm::Hearsay => self.hearsay(),
+            ConjForm::HearsayPolite => self.hearsay_polite(),
             ConjForm::Appearance => self.appearance(),
+            ConjForm::AppearancePolite => self.appearance_polite(),
+            ConjForm::SeemsLike => self.seems_like(),
+            ConjForm::SeemsLikePolite => self.seems_like_polite(),
+            ConjForm::Reportedly => self.reportedly(),
             ConjForm::HonorificOninaru => self.honorific_oninaru(),
             ConjForm::HumbleOsuru => self.humble_osuru(),
             ConjForm::Explanatory => self.explanatory(),
@@ -1227,6 +1291,24 @@ mod tests {
         check("読む", VerbClass::GodanMu, ConjForm::Appearance, "読みそうだ");
     }
 
+    // ─── Polite hearsay / appearance / seems-like / reportedly ───────
+
+    #[test]
+    fn polite_hearsay_and_appearance() {
+        check("行く", VerbClass::GodanKuIku, ConjForm::HearsayPolite, "行くそうです");
+        check("食べる", VerbClass::Ichidan, ConjForm::HearsayPolite, "食べるそうです");
+        check("行く", VerbClass::GodanKuIku, ConjForm::AppearancePolite, "行きそうです");
+        check("食べる", VerbClass::Ichidan, ConjForm::AppearancePolite, "食べそうです");
+    }
+
+    #[test]
+    fn seems_like_and_reportedly() {
+        check("行く", VerbClass::GodanKuIku, ConjForm::SeemsLike, "行くみたいだ");
+        check("行く", VerbClass::GodanKuIku, ConjForm::SeemsLikePolite, "行くみたいです");
+        check("行く", VerbClass::GodanKuIku, ConjForm::Reportedly, "行くらしい");
+        check("食べる", VerbClass::Ichidan, ConjForm::Reportedly, "食べるらしい");
+    }
+
     // ─── Keigo constructions ─────────────────────────────────────────
 
     #[test]
@@ -1243,6 +1325,43 @@ mod tests {
             VerbClass::GodanKu,
             ConjForm::HonorificOninaru,
             "お書きになる",
+        );
+    }
+
+    #[test]
+    fn keigo_with_go_prefix_for_kango_verbs() {
+        // Sino-Japanese (kango) verbs take ご instead of お.
+        let yomu = Verb::new("読む", VerbClass::GodanMu);
+        assert_eq!(
+            yomu.honorific_oninaru_with_prefix(HonorificPrefix::Go).surface,
+            "ご読みになる" // not what real Japanese would use for 読む but
+                           // demonstrates the API works
+        );
+        // Real example: 説明する would be honorific_oninaru as
+        // ご説明になる. We can't construct 説明する as a Verb here
+        // (it's a SuruCompound), but we can test the prefix API on
+        // any verb structurally.
+        let kaku = Verb::new("書く", VerbClass::GodanKu);
+        assert_eq!(
+            kaku.honorific_oninaru_with_prefix(HonorificPrefix::Go).surface,
+            "ご書きになる"
+        );
+        assert_eq!(
+            kaku.humble_osuru_with_prefix(HonorificPrefix::Go).surface,
+            "ご書きする"
+        );
+    }
+
+    #[test]
+    fn honorific_prefix_default_matches_explicit_o() {
+        let v = Verb::new("読む", VerbClass::GodanMu);
+        assert_eq!(
+            v.honorific_oninaru().surface,
+            v.honorific_oninaru_with_prefix(HonorificPrefix::O).surface,
+        );
+        assert_eq!(
+            v.humble_osuru().surface,
+            v.humble_osuru_with_prefix(HonorificPrefix::O).surface,
         );
     }
 
