@@ -95,8 +95,10 @@ pub enum ContextKind {
 }
 
 /// Raw JSON shape of one rule entry, before parallel-array expansion.
+/// Public so [`expand_rule`] can be called from tests; not part of
+/// the documented API surface.
 #[derive(Debug, Clone, Deserialize)]
-struct RawRule {
+pub struct RawRule {
     #[serde(default = "default_type")]
     r#type: String,
     #[serde(default)]

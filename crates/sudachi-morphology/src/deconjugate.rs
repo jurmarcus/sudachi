@@ -13,6 +13,7 @@
 //! 5. Length / depth / tag-density limits to keep the search bounded.
 
 use crate::rule::{ContextKind, Rule, RuleKind, load_default_rules};
+use crate::rule_index::RuleIndex;
 
 /// One candidate deinflection of an input surface.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,8 +55,12 @@ impl Form {
 
 /// Run the deconjugator against `input` using the bundled rules.
 /// Returns every valid endpoint form found.
+///
+/// The default rule set + index are built once on first call via
+/// [`std::sync::LazyLock`], so subsequent calls reuse the cached
+/// automaton.
 pub fn deconjugate(input: &str) -> Vec<Form> {
-    deconjugate_with(input, &DEFAULT_RULES)
+    deconjugate_with_index(input, &DEFAULT_RULES, &DEFAULT_INDEX)
 }
 
 /// Same as [`deconjugate`] but using a custom rule set.
@@ -73,7 +78,19 @@ pub fn deconjugate(input: &str) -> Vec<Form> {
 ///   `form.tags` is non-empty). E.g., stem expansions like
 ///   stem-mizenkei → v1.
 /// - `Standard`: applies anywhere.
+///
+/// Rule iteration: builds a one-shot [`RuleIndex`] over the
+/// passed-in rules. For repeated calls, prefer [`deconjugate`] which
+/// uses a process-wide pre-built index.
 pub fn deconjugate_with(input: &str, rules: &[Rule]) -> Vec<Form> {
+    let index = RuleIndex::build(rules);
+    deconjugate_with_index(input, rules, &index)
+}
+
+/// Like [`deconjugate_with`] but accepts a pre-built [`RuleIndex`].
+/// This is the form to use when calling repeatedly with the same
+/// rule set — index construction is amortised over many calls.
+pub fn deconjugate_with_index(input: &str, rules: &[Rule], index: &RuleIndex) -> Vec<Form> {
     if input.is_empty() {
         return Vec::new();
     }
@@ -90,11 +107,15 @@ pub fn deconjugate_with(input: &str, rules: &[Rule]) -> Vec<Form> {
     while !novel.is_empty() && iterations < MAX_ITERATIONS {
         let mut new_novel: Vec<Form> = Vec::new();
         for form in &novel {
-            for rule in rules {
+            // RuleIndex narrows the per-form rule iteration from
+            // O(n_rules) to O(input_length) via a daachorse
+            // Aho-Corasick automaton over the con_end suffixes.
+            for rule_idx in index.matching_rules(&form.text) {
                 iterations += 1;
                 if iterations >= MAX_ITERATIONS {
                     break;
                 }
+                let rule = &rules[rule_idx];
                 if let Some(new_form) = apply_rule(form, rule) {
                     let key = (
                         new_form.text.clone(),
@@ -237,6 +258,7 @@ fn apply_rule(form: &Form, rule: &Rule) -> Option<Form> {
 // Lazy-static — load rules once.
 use std::sync::LazyLock;
 static DEFAULT_RULES: LazyLock<Vec<Rule>> = LazyLock::new(load_default_rules);
+static DEFAULT_INDEX: LazyLock<RuleIndex> = LazyLock::new(|| RuleIndex::build(&DEFAULT_RULES));
 
 #[cfg(test)]
 mod tests {

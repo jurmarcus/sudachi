@@ -59,6 +59,7 @@ pub mod deconjugate;
 pub mod irregular;
 pub mod kana;
 pub mod rule;
+pub mod rule_index;
 pub mod tag;
 pub mod verb;
 pub mod verb_class;
