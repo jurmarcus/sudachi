@@ -1,250 +1,169 @@
-# AGENTS.md - sudachi-search
+# AGENTS.md — sudachi-search
 
-Context for AI agents working on this codebase.
+Context for AI agents working on this crate.
 
-## Project Summary
+## Purpose
 
-**sudachi-search** is the core B+C multi-granularity tokenization library.
+The B+C multi-granularity tokenisation core. Engine-agnostic. Produces `Vec<SearchToken>` with the `is_colocated: bool` flag that downstream adapters translate into engine-specific position semantics.
 
-| Attribute | Value |
-|-----------|-------|
-| Complexity | Low (~750 LOC, single file) |
-| Pattern | Tokenization strategy |
-| Key Feature | B+C multi-granularity |
-| Output | `Vec<SearchToken>` with `is_colocated` flag |
+| Attribute   | Value                                                     |
+| ----------- | --------------------------------------------------------- |
+| Type        | rlib (library)                                            |
+| Size        | ~750 LOC, single file (`src/lib.rs`)                      |
+| Public API  | `SearchTokenizer`, `SearchToken`, `CompoundWord`, `extract_compounds`, `SearchError` |
+| Dependency  | `sudachi-optimizer` (which re-exports upstream `sudachi`) |
 
-## The Problem
+## Architectural invariant
 
-Japanese compound words are invisible to traditional search:
-
-```
-Document: "東京都立大学で研究"
-Query: "大学"
-
-Mode C: ["東京都立大学", "で", "研究"]
-→ "大学" not found (trapped inside compound)
-
-B+C (this crate):
-  pos 0: "東京都立大学" (is_colocated: false)
-  pos 0: "東京"         (is_colocated: true)
-  pos 0: "都立"         (is_colocated: true)
-  pos 0: "大学"         (is_colocated: true) ← NOW SEARCHABLE
-  pos 1: "で"
-  pos 2: "研究"
-```
-
-## File Structure
-
-```
-sudachi-search/
-├── src/
-│   └── lib.rs    # Everything (~750 LOC)
-├── Cargo.toml
-├── README.md
-├── CLAUDE.md
-└── AGENTS.md
-```
-
-## Core Data Structures
-
-### SearchToken
+**All Sudachi imports go through `sudachi-optimizer::sudachi::*`.** Workspace `Cargo.toml` documents this rule. If a Sudachi type isn't yet re-exported, add it to `crates/sudachi-optimizer/src/sudachi.rs` first — never depend on upstream `sudachi` directly here.
 
 ```rust
-pub struct SearchToken {
-    pub surface: String,      // Token text
-    pub byte_start: usize,    // Byte offset start
-    pub byte_end: usize,      // Byte offset end
-    pub is_colocated: bool,   // Same position as previous?
-}
+use sudachi_optimizer::sudachi::{
+    JapaneseDictionary, Mode, StatelessTokenizer, Tokenize,
+};
 ```
 
-### CompoundWord
+## File map
 
-```rust
-pub struct CompoundWord {
-    pub surface: String,           // Full compound
-    pub components: Vec<String>,   // Mode B parts
-    pub byte_start: usize,
-    pub byte_end: usize,
-}
+```
+src/lib.rs    Everything (~750 LOC)
+              ├─ SearchToken        (struct)
+              ├─ CompoundWord       (struct + impl)
+              ├─ SearchTokenizer    (struct + impl)
+              ├─ extract_compounds  (free fn)
+              └─ SearchError        (enum + Display + Error)
+Cargo.toml    Single dep: sudachi-optimizer (workspace path dep)
+README.md     User-facing documentation
+CLAUDE.md     AI assistant context
+AGENTS.md     This file
 ```
 
-## Algorithm (tokenize_internal)
+## Tokenisation algorithm
 
 ```rust
-fn tokenize_internal(&self, input: &str, use_normalized: bool) -> Result<Vec<SearchToken>> {
-    // 1. Tokenize with Mode C (compounds)
+fn tokenize_internal(&self, input: &str, use_normalized: bool)
+    -> Result<Vec<SearchToken>, SearchError>
+{
     let morphemes_c = self.inner.tokenize(input, Mode::C, false)?;
-
-    // 2. Tokenize with Mode B (sub-tokens)
     let morphemes_b = self.inner.tokenize(input, Mode::B, false)?;
 
-    // 3. Build lookup of Mode B tokens by byte position
-    let mode_b_tokens: Vec<(byte_start, byte_end, text)> = ...;
+    // Mode B lookup keyed by byte range
+    let mode_b: Vec<(usize, usize, String)> = morphemes_b
+        .iter()
+        .map(|m| (m.begin(), m.end(), text_for(m, use_normalized)))
+        .collect();
 
-    let mut result = Vec::new();
+    let mut out = Vec::new();
+    for c in morphemes_c.iter() {
+        let c_text = text_for(c, use_normalized);
+        let c_start = c.begin();
+        let c_end = c.end();
 
-    // 4. For each Mode C token:
-    for morpheme_c in morphemes_c {
-        // 4a. Emit compound (NOT colocated)
-        result.push(SearchToken {
-            surface: morpheme_c.text(),
+        // 1. Emit the compound (advances position)
+        out.push(SearchToken {
+            surface: c_text.clone(),
+            byte_start: c_start,
+            byte_end: c_end,
             is_colocated: false,
-            ..
         });
 
-        // 4b. Find Mode B tokens within this span
-        for (b_start, b_end, b_text) in mode_b_tokens.within(morpheme_c.span()) {
-            // Only emit if different from Mode C
-            if b_text != morpheme_c.text() {
-                result.push(SearchToken {
-                    surface: b_text,
-                    is_colocated: true,  // ← SAME POSITION
-                    ..
+        // 2. Emit sub-tokens within C's span (same position)
+        for (b_start, b_end, b_text) in &mode_b {
+            if *b_start >= c_start && *b_end <= c_end && b_text != &c_text {
+                out.push(SearchToken {
+                    surface: b_text.clone(),
+                    byte_start: *b_start,
+                    byte_end: *b_end,
+                    is_colocated: true,
                 });
             }
         }
     }
-
-    Ok(result)
+    Ok(out)
 }
 ```
 
-## API Quick Reference
+Key invariants:
+1. Compound first (`is_colocated: false`), then sub-tokens (`is_colocated: true`).
+2. Skip sub-tokens whose text equals the compound — would create a duplicate index entry.
+3. Byte offsets, not char offsets.
 
-```rust
-impl SearchTokenizer {
-    pub fn new(dictionary: Arc<JapaneseDictionary>) -> Self;
-    pub fn from_tokenizer(tokenizer: StatelessTokenizer<...>) -> Self;
-    pub fn with_surface_form(self) -> Self;
-    pub fn with_normalized_form(self, enabled: bool) -> Self;
-    pub fn uses_normalized_form(&self) -> bool;
-    pub fn tokenize(&self, input: &str) -> Result<Vec<SearchToken>, SearchError>;
-    pub fn tokenize_with_normalization(&self, input: &str, normalize: bool) -> Result<...>;
-    pub fn detect_compounds(&self, input: &str) -> Result<Vec<CompoundWord>, SearchError>;
-    pub fn tokenize_with_compounds(&self, input: &str) -> Result<(Vec<SearchToken>, Vec<CompoundWord>)>;
-    pub fn inner(&self) -> &StatelessTokenizer<Arc<JapaneseDictionary>>;
-}
+## When changing this crate
 
-pub fn extract_compounds(tokens: &[SearchToken]) -> Vec<CompoundWord>;
+### Adding a new method on `SearchTokenizer`
+
+Just append to the `impl SearchTokenizer` block. Keep the `&self` (immutable) shape — downstream callers may share a single tokenizer behind `Arc<…>`.
+
+### Adding a field to `SearchToken`
+
+Will break every adapter (`sudachi-sqlite`, `sudachi-tantivy`, `sudachi-wasm`). Update them in the same change.
+
+### Changing default normalisation
+
+Default is `with_normalized_form(true)`. If you change this, update the corresponding defaults in `sudachi-tantivy::SudachiTokenizer::new` and `sudachi-sqlite`'s `xCreate` parsing.
+
+### Changing the tokenisation algorithm
+
+Be careful with:
+- Order of emission (C first, then B's inside C's span)
+- Inequality check (`b_text != c_text`)
+- Byte offsets passed through unchanged
+- Borrow lifetimes — `morphemes_b` must outlive the lookup
+
+## Testing
+
+```bash
+cargo test -p sudachi-search                       # unit tests, no dictionary
+cargo test -p sudachi-search -- --include-ignored  # integration, requires SUDACHI_DICT_PATH
 ```
 
-## Colocated Token Rules
+### Test cases that must keep passing
 
-**Critical for correctness:**
+| Input                            | Expected output                                    |
+| -------------------------------- | -------------------------------------------------- |
+| `"東京都立大学"`                 | 1 compound + 3 sub-tokens at position 0            |
+| `"今日は天気がいい"`             | No colocated tokens                                |
+| `"食べた"` (normalised)          | `["食べる"]`                                       |
+| `""`                             | Empty `Vec`                                        |
+| `"予約困難店を探す"`             | 1 compound (`予約困難店`) with 3 components       |
+| Two compounds in one input       | Each gets its own colocated sub-tokens             |
 
-1. **Mode C token** → `is_colocated: false` (new position)
-2. **Mode B sub-tokens within Mode C span** → `is_colocated: true` (same position)
-3. **Only emit different tokens** - skip if Mode B == Mode C
-
-```rust
-// CORRECT: only emit when different
-if b_text != &text_c {
-    result.push(SearchToken { is_colocated: true, .. });
-}
-```
-
-## Integration Points
-
-### Downstream Adapters
-
-| Crate | Translation |
-|-------|-------------|
-| sudachi-tantivy | `is_colocated` → `position` stays same |
-| sudachi-sqlite | `is_colocated` → `FTS5_TOKEN_COLOCATED` |
-| sudachi-postgres | Via sudachi-tantivy |
+## Integration points
 
 ### Upstream
 
 ```rust
-use sudachi::analysis::stateless_tokenizer::StatelessTokenizer;
-use sudachi::analysis::{Mode, Tokenize};
-use sudachi::dic::dictionary::JapaneseDictionary;
+sudachi_optimizer::sudachi::{
+    JapaneseDictionary,    // dictionary handle
+    Mode,                  // A | B | C
+    StatelessTokenizer,    // takes Arc<JapaneseDictionary>
+    Tokenize,              // trait providing tokenize()
+}
 ```
+
+### Downstream
+
+| Crate              | What they import        | What they do with `is_colocated`               |
+| ------------------ | ----------------------- | ---------------------------------------------- |
+| `sudachi-sqlite`   | `SearchTokenizer`, `SearchToken` | Set `FTS5_TOKEN_COLOCATED` flag (0x0001) on the token callback |
+| `sudachi-tantivy`  | `SearchTokenizer` (only Search mode); falls back to upstream `StatelessTokenizer` for A/B/C | Skip incrementing Tantivy position |
+| `sudachi-wasm`     | `SearchTokenizer`, `SearchToken`, `CompoundWord` | Pass through as `isColocated` JSON field |
 
 ## Commands
 
-```bash
-just dict-setup   # Download dictionary (one-time)
-just build        # Build library
-just test         # Unit tests (no dictionary)
-just test-all     # All tests (requires dictionary)
-just fix          # Format and lint
-just env          # Show environment
-```
-
-## Testing
-
-### Unit Tests (No Dictionary)
+Run from the repo root (workspace `just`):
 
 ```bash
-just test
+just dict-setup    # download dictionary (one-time)
+just build         # workspace release build
+just test          # workspace unit tests
+just fix           # fmt + clippy
+just ci            # fmt check + clippy -D warnings + tests
 ```
 
-### Integration Tests (Requires Dictionary)
+## Performance characteristics
 
-```bash
-just test-all
-```
-
-### Key Test Cases
-
-1. **Simple compound**: "東京都立大学" → compound + 3 sub-tokens
-2. **No compound**: "今日は" → single tokens, no colocated
-3. **Multiple compounds**: "東京都立大学で国会議事堂" → 2 compounds
-4. **Normalization**: "食べた" → "食べる" (when normalized)
-5. **Empty input**: "" → empty Vec
-
-## Debugging
-
-### Verify Colocated Logic
-
-```rust
-let tokens = tokenizer.tokenize("東京都立大学")?;
-for (i, token) in tokens.iter().enumerate() {
-    println!("{}: {} colocated={}", i, token.surface, token.is_colocated);
-}
-// Expected:
-// 0: 東京都立大学 colocated=false
-// 1: 東京 colocated=true
-// 2: 都立 colocated=true
-// 3: 大学 colocated=true
-```
-
-### Common Issues
-
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| No sub-tokens | Mode B == Mode C | Check dictionary quality |
-| Wrong offsets | Char vs byte | Use `m.begin()` directly (bytes) |
-| Missing compounds | Threshold too strict | Check `components.len() > 1` |
-
-## When Modifying
-
-### Adding Features
-
-1. **New output format**: Add to `SearchToken` struct
-2. **New detection mode**: Add method like `detect_compounds()`
-3. **Performance**: Consider caching Mode B tokens
-
-### Changing Algorithm
-
-Be careful with:
-- Colocated flag logic
-- Byte offset handling
-- Token emission order (Mode C first, then Mode B)
-
-### Testing Changes
-
-Always test with real Japanese text:
-- Compound words (東京都立大学, 予約困難店)
-- Simple text (今日は天気がいい)
-- Mixed (会議が東京で開催)
-
-## Performance
-
-- Dictionary: Shared via Arc, ~70MB
-- Tokenization: 2x standard (Mode C + Mode B)
-- Allocations: 2 Vec per input + result Vec
-
-Optimize by reusing tokenizer instance.
+- **Dictionary**: ~70MB, shared via `Arc`. One dict can back many tokenizers.
+- **Per-call cost**: 2× single-mode tokenisation (Mode C + Mode B passes).
+- **Per-call allocs**: 2× `Vec<Morpheme>` (Sudachi internal) + 1× `Vec<SearchToken>` (returned).
+- **Optimisation**: Reuse a single `SearchTokenizer` across calls. Don't reconstruct per request.

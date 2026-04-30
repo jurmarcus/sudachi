@@ -1,165 +1,224 @@
 # AGENTS.md — sudachi monorepo
 
-Context for AI agents working on this codebase.
+Context for AI agents operating across the workspace.
 
-## Repository Overview
+## Repository purpose
 
-Rust monorepo for Sudachi-based Japanese tokenization across multiple search engines.
+A six-crate Rust workspace producing Japanese morphological tooling:
 
-| Crate | Type | Purpose |
-|-------|------|---------|
-| `sudachi-search` | lib | Core B+C tokenization, engine-agnostic |
-| `sudachi-sqlite` | cdylib + rlib | SQLite FTS5 loadable extension |
-| `sudachi-tantivy` | lib | Tantivy `Tokenizer` impl (used by paradedb fork) |
-| `sudachi-wasm` | wasm-pack | Browser/Node.js WASM (excluded from workspace) |
-| `sudachi-postgres` | docker only | Infra for ParadeDB; Rust source is in `jurmarcus/paradedb` |
+| Crate                | Type                  | Purpose                                                  |
+| -------------------- | --------------------- | -------------------------------------------------------- |
+| `sudachi-morphology` | rlib                  | Bidirectional morphology — forward conjugation + backward deconjugation. Standalone. |
+| `sudachi-optimizer`  | rlib                  | Token-stream rewriter + the single Sudachi gateway re-export. |
+| `sudachi-search`     | rlib                  | B+C multi-granularity tokenizer. Engine-agnostic.        |
+| `sudachi-sqlite`     | cdylib + rlib         | SQLite FTS5 loadable extension.                          |
+| `sudachi-tantivy`    | rlib                  | `tantivy::tokenizer::Tokenizer` adapter.                 |
+| `sudachi-wasm`       | cdylib + rlib         | wasm-bindgen tokenizer for browser + Node.js.            |
 
-Root workspace members: `sudachi-search`, `sudachi-sqlite`, `sudachi-tantivy`.
+Plus `docker/postgres/` — Docker infra for ParadeDB; the consumed Rust source (pg_search) lives in `~/CODE/paradedb`.
 
-## The Core Concept
+Workspace members: all six crates listed above. Edition 2024, Rust 1.85+.
 
-B+C multi-granularity: emit the Mode C compound word FIRST, then Mode B sub-tokens at
-the SAME position. The `is_colocated` field signals "don't advance position":
+## Two load-bearing concepts
 
-```
+### 1. B+C multi-granularity (`is_colocated`)
+
+```text
 tokenize("東京都立大学"):
-  SearchToken { surface: "東京都立大学", is_colocated: false }  ← new position
-  SearchToken { surface: "東京",         is_colocated: true  }  ← same position
-  SearchToken { surface: "都立",         is_colocated: true  }  ← same position
-  SearchToken { surface: "大学",         is_colocated: true  }  ← same position
+  SearchToken { surface: "東京都立大学", is_colocated: false }   ← new position
+  SearchToken { surface: "東京",         is_colocated: true  }   ← same position
+  SearchToken { surface: "都立",         is_colocated: true  }   ← same position
+  SearchToken { surface: "大学",         is_colocated: true  }   ← same position
 ```
 
-Every adapter crate's job is to translate `is_colocated` for its engine:
-- `sudachi-sqlite`: → `FTS5_TOKEN_COLOCATED` flag (= 0x0001)
-- `sudachi-tantivy`: → Tantivy position increment stays 0
+Each adapter crate translates `is_colocated`:
+- `sudachi-sqlite` → `FTS5_TOKEN_COLOCATED` flag (0x0001)
+- `sudachi-tantivy` → Tantivy position increment stays at 0
+- `sudachi-wasm` → emitted as a JSON field for JS callers
 
-## File Map
+### 2. The single Sudachi gateway
 
-```
-Cargo.toml                   Workspace root (edition 2024, workspace.dependencies)
-justfile                     Task runner for all crates
-rust-toolchain.toml          Pins stable channel
-crates/
-  sudachi-search/src/lib.rs  Everything: SearchTokenizer, SearchToken, CompoundWord
-  sudachi-sqlite/src/
-    lib.rs                   Entry point, tokenization loop, dict loading
-    extension.rs             FTS5 API retrieval, tokenizer registration, callbacks
-    common.rs                ffi_panic_boundary, constants, callback types
-  sudachi-tantivy/src/
-    lib.rs                   Re-exports: SudachiTokenizer, SudachiTokenStream, SplitMode
-    tokenizer.rs             SudachiTokenizer implementing Tantivy's Tokenizer trait
-    stream.rs                SudachiTokenStream implementing Tantivy's TokenStream trait
-  sudachi-postgres/docker/
-    Dockerfile               Clones jurmarcus/paradedb from GitHub (no local source)
-    bootstrap.sh             Postgres init script (CREATE EXTENSION pg_search)
-    pg_search--0.20.6.sql    Pre-generated SQL schema (bypasses pgrx package UTF-8 bug)
-```
+`sudachi-optimizer::sudachi` re-exports every upstream Sudachi type that any consumer needs. Workspace `Cargo.toml` makes the rule explicit:
 
-## Critical Rules
-
-### DO NOT violate these:
-
-1. **`panic = "abort"` MUST NOT appear in `sudachi-sqlite`** — this disables `catch_unwind`
-   and causes undefined behavior when Rust panics cross the FFI boundary into SQLite.
-   Panics ARE caught by `ffi_panic_boundary` using `std::panic::catch_unwind`. Leave it.
-
-2. **`crate-type = ["cdylib", "rlib"]` in sudachi-sqlite** — `cdylib` produces the loadable
-   `.dylib`/`.so`; `rlib` is required for `cargo test` to link test code. Both are needed.
-
-3. **`sudachi.rs` rev must stay pinned** — all workspace crates use the same git rev for the
-   upstream sudachi dependency. Changing it in one place without the others breaks types.
-
-4. **`is_colocated` ordering** — Mode C token FIRST (`is_colocated: false`), then Mode B
-   sub-tokens (`is_colocated: true`). Never reorder. Search engines rely on this sequence.
-
-5. **Sapling, not git** — `sl commit`, `sl push`, `sl addremove`. Never run bare `git` commands
-   on this repo.
-
-## Build & Test
-
-```bash
-just ci           # fmt check + clippy -D warnings + tests — must pass before committing
-just build        # Release build
-just test         # Unit tests (no dictionary required)
-just dict-setup   # Download dictionary (one-time, for integration tests)
-```
-
-## Dependency Graph
-
-```
-sudachi.rs (upstream git)
-    ↑
-sudachi-search    (pinned rev, workspace dep)
-    ↑
-sudachi-sqlite    (path dep via workspace)
-sudachi-tantivy   (path dep via workspace) → tantivy-tokenizer-api
-
-jurmarcus/paradedb → sudachi-tantivy (git dep from this repo)
-```
-
-## Algorithm (sudachi-search)
+> Direct use of upstream `sudachi` is restricted to `sudachi-optimizer`; everything else imports through the gateway so post-tokenisation rules apply uniformly across consumers.
 
 ```rust
-fn tokenize_internal(input: &str) -> Vec<SearchToken> {
-    // Two tokenization passes
-    let morphemes_c = tokenizer.tokenize(input, Mode::C)?;  // compounds
-    let morphemes_b = tokenizer.tokenize(input, Mode::B)?;  // sub-tokens
-
-    for each morpheme_c:
-        emit SearchToken { is_colocated: false }   // compound word
-
-        for each morpheme_b within morpheme_c's byte span:
-            if morpheme_b.text != morpheme_c.text:
-                emit SearchToken { is_colocated: true }  // sub-token
-}
+// Rule: everything except sudachi-optimizer uses this
+use sudachi_optimizer::sudachi::{JapaneseDictionary, Mode, StatelessTokenizer, Tokenize};
 ```
 
-## ParadeDB Integration
+If you find yourself adding `sudachi = "..."` to a crate other than `sudachi-optimizer`, stop and add the missing re-export to `sudachi-optimizer/src/sudachi.rs` instead.
 
-The paradedb fork lives at `~/CODE/paradedb` (`jurmarcus/paradedb`).
-Key files there:
-- `tokenizers/src/sudachi.rs` — `SudachiTokenizer` wrapping `sudachi-tantivy`
-- `tokenizers/src/manager.rs` — `SearchTokenizer::Sudachi` variant (feature-gated)
-- `tokenizers/Cargo.toml` — `sudachi = ["dep:sudachi-tantivy"]` feature
+## File map
 
-The `[patch.crates-io]` for `tantivy-tokenizer-api` in paradedb's Cargo.toml
-redirects all transitive deps to paradedb's forked tantivy API. This is how
-`sudachi-tantivy = "0.6.0"` resolves to the same type as paradedb's internal tantivy.
+```
+Cargo.toml              Workspace root: members, [workspace.package], [workspace.dependencies], [patch], release profile
+justfile                Task runner — single source of truth for build/test/wasm/pgrx commands
+rust-toolchain.toml     Stable channel pin
 
-Build paradedb locally:
+crates/sudachi-morphology/
+  src/lib.rs            Re-exports: Verb, VerbClass, IAdjective, NaAdjective, Conjugation, deconjugate, ...
+  src/conjugation.rs    Feature-record forward conjugation (Voice + Mood + Politeness + Polarity + Tense)
+  src/verb.rs           Verb<class> + Conjugated<form> typed forward API
+  src/verb_class.rs     VerbClass enum (every modern paradigm + classical residues)
+  src/adjective.rs      IAdjective / NaAdjective forward API
+  src/copula.rs         Copula forms (だ / です / である / のだ)
+  src/deconjugate.rs    BFS rule-table deconjugator → Vec<Form>
+  src/rule.rs           Rule struct + RuleKind (Standard/OnlyFinal/NeverFinal/Rewrite/Context/Substitution)
+  src/rule_index.rs     Aho-Corasick index over rule.con_end suffixes (daachorse)
+  src/irregular.rs      Hard-coded paradigms for する / 来る / ある / 行く
+  src/kana.rs           Hiragana/katakana helpers
+  src/tag.rs            ConjForm shared tag taxonomy
+  data/                 Rule corpus (JSON) + deconjugation_rules.json
+  tests/golden.rs       Golden corpus runner (~4,800 cases across 23 classes)
+  tests/golden/*.rs     Per-class fixture modules
+  tests/round_trip.rs   Forward → deconjugate round-trip checks
+  benches/deconjugate.rs
+
+crates/sudachi-optimizer/
+  src/lib.rs            Re-exports: Optimizer, Pipeline, Stage, Phase, Morpheme, Pos, MorphemeFeatures, Lexicon, load_dictionary
+  src/sudachi.rs        Upstream re-exports — the gateway
+  src/optimizer.rs      Optimizer (StatelessTokenizer + Pipeline + default Mode)
+  src/pipeline.rs       Pipeline runner + canonical_stages() (full canonical ordering)
+  src/stage.rs          Stage struct + Phase enum (Split/Repair/Combine/Cleanup/Disambiguation)
+  src/token.rs          Morpheme owned mirror of sudachi::Morpheme + Pos closed enum
+  src/token_features.rs MorphemeFeatures bitflags (gates whether a stage runs)
+  src/lookup.rs         Lexicon trait (vocab callback) + EmptyLexicon
+  src/data.rs           Static rule data
+  src/split/*.rs        Split-phase rules (1 file per rule)
+  src/repair/*.rs       Repair-phase rules
+  src/combine/*.rs      Combine-phase rules
+  src/cleanup/*.rs      Cleanup-phase rules
+  src/disambiguation/*.rs  Disambiguation-phase rules
+
+crates/sudachi-search/
+  src/lib.rs            Everything: SearchTokenizer, SearchToken, CompoundWord, extract_compounds, SearchError
+
+crates/sudachi-sqlite/
+  src/lib.rs            Entry point sudachi_fts5_tokenizer_init, tokenization loop, dict loading
+  src/extension.rs      FTS5 API retrieval, tokenizer registration
+  src/common.rs         ffi_panic_boundary, SQLite/FTS5 constants, callback types
+
+crates/sudachi-tantivy/
+  src/lib.rs            Re-exports: SudachiTokenizer, SudachiTokenStream, SplitMode, TokenData
+  src/tokenizer.rs      SudachiTokenizer + SplitMode + TokenizerInner enum
+  src/stream.rs         SudachiTokenStream — position arithmetic over pre-collected TokenData
+
+crates/sudachi-wasm/
+  src/lib.rs            wasm-bindgen exports — SudachiTokenizer, JsToken, JsCompound
+  example/index.html    Browser demo
+  example/node.mjs      Node.js demo
+
+docker/postgres/
+  Dockerfile            Clones jurmarcus/paradedb, builds pg_search with --features icu,sudachi
+  bootstrap.sh          Postgres init: CREATE EXTENSION pg_search, search_path
+  docker-compose.yml    Production compose
+  docker-compose.dev.yml Dev compose
+  pg_search--0.20.6.sql Pre-generated schema (workaround for pgrx package UTF-8 bug)
+  manifests/            Kubernetes manifests
+```
+
+## Hard rules
+
+These will break things or silently change behaviour. Don't violate them without a deliberate reason.
+
+1. **Do not import `sudachi` directly outside `sudachi-optimizer`.** Add the re-export to `sudachi-optimizer/src/sudachi.rs` and consume it from there.
+2. **Do not add `panic = "abort"` to `sudachi-sqlite` or to the workspace.** Sudachi-sqlite's FFI panic boundary depends on `std::panic::catch_unwind`, which `panic = "abort"` disables, producing UB on any Rust panic that crosses the SQLite FFI.
+3. **Do not change `sudachi-sqlite`'s `crate-type = ["cdylib", "rlib"]`.** cdylib produces the loadable extension; rlib lets `cargo test` link the test binary. Both are required.
+4. **Do not reorder `is_colocated` emission.** The Mode C compound MUST come first (`is_colocated: false`), then any Mode B sub-tokens (`is_colocated: true`). Search engines rely on this sequence to compute positions.
+5. **Pin upstream `sudachi.rs` to one rev across the workspace.** Two crates seeing different upstream types do not link.
+6. **Use Sapling (`sl`), not `git`.** This repo's history is in `.sl/`. Bare `git` commands will fail or do the wrong thing.
+7. **Run `just ci` before committing.** It runs `cargo fmt --all --check`, `cargo clippy --all -- -D warnings`, and `cargo test`. The clippy gate is `-D warnings`, so any new lint fails CI.
+
+## Build & test
+
 ```bash
-just pgrx-build   # → cd ~/CODE/paradedb && cargo pgrx build -p pg_search --features icu,sudachi
+just dict-setup   # one-time — downloads dictionary to ~/.sudachi/
+just ci           # fmt check + clippy -D warnings + tests — gate before commit
+just build        # release build
+just test         # workspace tests
 ```
 
-## Common Tasks
+Most workspace tests do not require the dictionary. Tests that do are gated with `#[ignore]` and run via `cargo test -- --include-ignored`.
 
-**Adding a tokenizer feature to sudachi-search:**
-1. Add method to `SearchTokenizer` in `crates/sudachi-search/src/lib.rs`
-2. Run `just ci` to verify
+## Dependency graph (workspace level)
 
-**Adding a tokenizer option to sudachi-sqlite:**
-1. Parse in `xCreate` callback (`src/extension.rs`)
-2. Store in `Fts5Tokenizer` struct (`src/lib.rs`)
-3. Test with `just test`
+```
+sudachi.rs (upstream git, pinned rev, [patch] redirects to wasm-friendly fork)
+       ▲
+       │ direct dep, only allowed here
+sudachi-optimizer  ──► sudachi-morphology
+       ▲
+       │ everyone else reaches Sudachi through the optimizer's `sudachi::*` re-export
+       │
+sudachi-search ◄── sudachi-sqlite
+              ◄── sudachi-tantivy
+              ◄── sudachi-wasm
 
-**Updating the Tantivy integration in paradedb:**
-1. Edit `crates/sudachi-tantivy/src/tokenizer.rs` or `stream.rs`
-2. `sl commit && sl push` to push to GitHub
-3. In `~/CODE/paradedb`: `cargo update -p sudachi-tantivy`
-4. `just pgrx-check` to verify
+paradedb/pg_search → sudachi-tantivy (git dep, separate repo)
+```
 
-**Testing the SQLite extension manually:**
+## Common tasks
+
+### Add a feature to `sudachi-search`
+
+1. Add the method/struct to `crates/sudachi-search/src/lib.rs`.
+2. If new Sudachi types are needed, add them to `crates/sudachi-optimizer/src/sudachi.rs` first and re-export.
+3. `just ci` to verify.
+
+### Add a tokenizer option to `sudachi-sqlite`
+
+1. Parse the option in the `xCreate` callback (`src/extension.rs`).
+2. Store on the `Fts5Tokenizer` struct (`src/lib.rs`).
+3. Add a unit test; `just test`.
+
+### Add a new optimiser rule
+
+1. Pick a phase: `split/`, `repair/`, `combine/`, `cleanup/`, or `disambiguation/`.
+2. Create `crates/sudachi-optimizer/src/<phase>/<rule_name>.rs`. One rule per file.
+3. Define `pub fn apply(morphemes: Vec<Morpheme>, lexicon: &dyn Lexicon) -> Vec<Morpheme>`.
+4. Register it in `pipeline::canonical_stages` with the appropriate `Phase` and `MorphemeFeatures` gate.
+5. Unit tests in the same file.
+
+### Update Tantivy integration (paradedb consumer)
+
+1. Edit `crates/sudachi-tantivy/src/tokenizer.rs` or `src/stream.rs`.
+2. `sl commit && sl push` to make the change visible to paradedb's git dep.
+3. In `~/CODE/paradedb`: `cargo update -p sudachi-tantivy && just pgrx-check`.
+
+### Test the SQLite extension manually
+
 ```bash
 SUDACHI_DICT_PATH=~/.sudachi/system_full.dic sqlite3 test.db
-.load ./target/release/libsudachi_sqlite sudachi_fts5_tokenizer_init
-CREATE VIRTUAL TABLE t USING fts5(c, tokenize='sudachi_tokenizer');
-INSERT INTO t VALUES ('東京都立大学で研究');
-SELECT * FROM t WHERE t MATCH '大学';
+sqlite> .load ./target/release/libsudachi_sqlite sudachi_fts5_tokenizer_init
+sqlite> CREATE VIRTUAL TABLE t USING fts5(c, tokenize='sudachi_tokenizer');
+sqlite> INSERT INTO t VALUES ('東京都立大学で研究');
+sqlite> SELECT * FROM t WHERE t MATCH '大学';
 ```
 
-## Performance Notes
+### Add a forward conjugation form to `sudachi-morphology`
 
-- Dictionary is ~70MB, shared via `Arc<JapaneseDictionary>`
-- B+C tokenization does 2 passes — ~2× the cost of single-mode tokenization
-- `sudachi-sqlite` loads dictionary at `xCreate` time (once per FTS5 table)
-- `sudachi-tantivy` uses `Lazy<Option<Arc<SudachiTokenizer>>>` per mode — loaded once
+1. Add the method to `Verb` / `IAdjective` / `NaAdjective` in `crates/sudachi-morphology/src/verb.rs` etc.
+2. If the form is a new axis combination, extend `Conjugation` axes (`Voice` / `Mood` / `Politeness` / `Polarity` / `Tense`) in `src/conjugation.rs`.
+3. Add cases to `tests/golden/<class>.rs` covering the new form.
+4. `cargo test --test golden` to verify.
+
+### Add a deconjugation rule
+
+1. Edit `crates/sudachi-morphology/data/deconjugation_rules.json`.
+2. Add round-trip test in `tests/round_trip.rs`.
+3. Add fixture cases to the relevant `tests/golden/<class>.rs`.
+4. `cargo test -p sudachi-morphology` to verify.
+
+## Performance notes
+
+- Dictionary is ~70MB. Share via `Arc<JapaneseDictionary>` between tokenizer instances.
+- B+C tokenisation does two Sudachi passes — ~2× single-mode cost.
+- `sudachi-sqlite` loads the dictionary once per FTS5 table (in `xCreate`).
+- `sudachi-tantivy`'s paradedb consumer uses `Lazy<Option<Arc<SudachiTokenizer>>>` per mode for one-shot init.
+- `sudachi-morphology`'s deconjugator builds a daachorse Aho-Corasick automaton once at first use via `LazyLock` and reuses it for every subsequent call.
+- `sudachi-optimizer`'s pipeline gates each stage on `MorphemeFeatures`, skipping stages whose triggering features aren't present in the current morpheme stream.
+
+## License
+
+Apache-2.0 for everything except `sudachi-morphology` (MIT). Per-crate `Cargo.toml` is authoritative.

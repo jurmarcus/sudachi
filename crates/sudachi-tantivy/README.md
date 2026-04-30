@@ -1,89 +1,95 @@
 # sudachi-tantivy
 
-**Sudachi Japanese tokenizer for [Tantivy](https://github.com/quickwit-oss/tantivy) full-text search.**
+**Sudachi tokenizer for [Tantivy](https://github.com/quickwit-oss/tantivy).**
 
-Implements `tantivy::tokenizer::Tokenizer` backed by Sudachi morphological analysis with B+C multi-granularity tokenization. Used by [jurmarcus/paradedb](https://github.com/jurmarcus/paradedb) as a git dependency.
+Implements `tantivy::tokenizer::Tokenizer` backed by Sudachi morphological analysis. Supports four split modes — A, B, C, and Search (B+C, default). Used by `pg_search` (the ParadeDB Postgres extension) as a git dependency to provide the `pdb.sudachi` cast.
 
 ---
 
 ## Features
 
-| Feature | Description |
-|---------|-------------|
-| **B+C Multi-Granularity** | Search mode emits compound words AND sub-tokens at the same Tantivy position |
-| **Four Split Modes** | A (finest), B (medium), C (coarsest), Search (B+C, default) |
-| **Normalized Forms** | 食べた → 食べる (verb conjugation), variant kanji, fullwidth normalization |
-| **Shared Dictionary** | `Arc<JapaneseDictionary>` for efficient multi-tokenizer setups |
+| Feature                    | Description                                                                 |
+| -------------------------- | --------------------------------------------------------------------------- |
+| **B+C multi-granularity**  | Search mode emits compound + sub-tokens at the same Tantivy position        |
+| **Four split modes**       | A (finest), B (medium), C (coarsest), Search (B+C, default)                 |
+| **Normalised forms**       | 食べた → 食べる, 附属 → 付属, ＳＵＭＭＥＲ → サマー, パーティー → パーティ   |
+| **Shared dictionary**      | `Arc<JapaneseDictionary>` — one dict can back many tokenizers + modes       |
 
 ---
 
-## Quick Start
+## Install
+
+Inside this workspace:
+
+```toml
+sudachi-tantivy.workspace = true
+```
+
+As a git dep (downstream consumers — e.g. ParadeDB):
+
+```toml
+sudachi-tantivy = { git = "https://github.com/jurmarcus/sudachi" }
+```
+
+The dictionary is read from `SUDACHI_DICT_PATH` at construction time (or pre-loaded via `with_dictionary`).
+
+---
+
+## Quick start
 
 ```rust
 use sudachi_tantivy::{SudachiTokenizer, SplitMode};
 use tantivy::tokenizer::Tokenizer;
 
-// Load via SUDACHI_DICT_PATH environment variable
+// Loads dictionary from SUDACHI_DICT_PATH
 let tokenizer = SudachiTokenizer::new(SplitMode::Search)?;
 
-// Or share a pre-loaded dictionary
-let tokenizer = SudachiTokenizer::with_dictionary(dictionary, SplitMode::Search);
+let mut stream = tokenizer.token_stream("東京都立大学");
+// Tokens emitted:
+//   "東京都立大学"  position=0  position_length=1
+//   "東京"          position=0  position_length=1   ← colocated
+//   "都立"          position=0  position_length=1   ← colocated
+//   "大学"          position=0  position_length=1   ← colocated
 
 // Register with Tantivy
 let manager = tantivy::tokenizer::TokenizerManager::default();
 manager.register("sudachi", tokenizer);
 ```
 
----
-
-## Split Modes
-
-| Mode | Description | "東京都立大学" Output |
-|------|-------------|----------------------|
-| A | Finest granularity | ["東京", "都", "立", "大学"] |
-| B | Medium granularity | ["東京", "都立", "大学"] |
-| C | Coarsest granularity | ["東京都立大学"] |
-| **Search** | **B+C (default)** | ["東京都立大学", "東京"\*, "都立"\*, "大学"\*] |
-
-\* Colocated tokens — Tantivy position does not advance for these tokens.
-
----
-
-## Search Mode
-
-Search mode emits compound words AND their sub-tokens at the same Tantivy position,
-enabling both exact and partial matching:
+Or share a pre-loaded dictionary across tokenizer instances:
 
 ```rust
-let mut tokenizer = SudachiTokenizer::new(SplitMode::Search)?;
-let mut stream = tokenizer.token_stream("東京都立大学");
-
-// Tokens (all at position 0):
-//   "東京都立大学"  position=0, position_length=1
-//   "東京"          position=0, position_length=1  ← colocated
-//   "都立"          position=0, position_length=1  ← colocated
-//   "大学"          position=0, position_length=1  ← colocated
+let tokenizer = SudachiTokenizer::with_dictionary(dictionary, SplitMode::Search);
 ```
 
 ---
 
-## Normalization
+## Split modes
 
-Default is normalized form for better recall:
+| Mode      | Granularity | "東京都立大学" output                                   |
+| --------- | ----------- | ------------------------------------------------------- |
+| A         | Finest      | `["東京", "都", "立", "大学"]`                          |
+| B         | Medium      | `["東京", "都立", "大学"]`                              |
+| C         | Coarsest    | `["東京都立大学"]`                                      |
+| **Search**| **B+C**     | `["東京都立大学", "東京"*, "都立"*, "大学"*]` *= colocated |
 
-| Surface | Normalized | Type |
-|---------|------------|------|
-| 食べた | 食べる | Verb conjugation |
-| 美しかった | 美しい | Adjective inflection |
-| 附属 | 付属 | Variant kanji |
-| ＳＵＭＭＥＲ | サマー | Fullwidth conversion |
+In Search mode, colocated tokens land at the same Tantivy position as the preceding compound — Tantivy's position arithmetic doesn't advance.
+
+---
+
+## Normalisation
+
+Default. Surface form is opt-in.
 
 ```rust
-// Normalized (default)
+// Normalised (default — better recall)
 let tokenizer = SudachiTokenizer::new(SplitMode::Search)?;
 
-// Surface form
+// Surface form (raw input)
 let tokenizer = SudachiTokenizer::new(SplitMode::Search)?.with_surface_form();
+
+// Or set explicitly
+let tokenizer = SudachiTokenizer::new(SplitMode::Search)?.with_normalized_form(false);
 ```
 
 ---
@@ -92,11 +98,9 @@ let tokenizer = SudachiTokenizer::new(SplitMode::Search)?.with_surface_form();
 
 ```rust
 impl SudachiTokenizer {
-    // Construction
     pub fn new(mode: SplitMode) -> Result<Self, SudachiError>;
     pub fn with_dictionary(dictionary: Arc<JapaneseDictionary>, mode: SplitMode) -> Self;
 
-    // Configuration
     pub fn with_surface_form(self) -> Self;
     pub fn with_normalized_form(self, enabled: bool) -> Self;
     pub fn uses_normalized_form(&self) -> bool;
@@ -107,6 +111,8 @@ impl Tokenizer for SudachiTokenizer {
     type TokenStream<'a> = SudachiTokenStream<'a>;
     fn token_stream<'a>(&'a mut self, text: &'a str) -> SudachiTokenStream<'a>;
 }
+
+pub enum SplitMode { A, B, C, Search }
 ```
 
 ---
@@ -115,22 +121,28 @@ impl Tokenizer for SudachiTokenizer {
 
 ```
 SudachiTokenizer
-  ├── TokenizerInner::Standard(StatelessTokenizer)  ← Modes A, B, C
-  └── TokenizerInner::Search(SearchTokenizer)       ← Search mode (B+C)
-          ↓
-  SudachiTokenStream
-    ├── advances through Vec<TokenData>
-    └── is_colocated: true → position_length=1, position NOT incremented
+  ├── TokenizerInner::Standard(StatelessTokenizer)   ← modes A, B, C
+  └── TokenizerInner::Search(SearchTokenizer)        ← Search (B+C) via sudachi-search
+
+SudachiTokenStream<'a>
+  └── advances over a pre-collected Vec<TokenData>
+      └── if token_data.is_colocated:
+              token.position stays the same (no increment)
+          else:
+              token.position += 1
 ```
+
+`token_stream` collects all tokens up front into a `Vec<TokenData>` (an owned, lifetime-free representation). This sidesteps a borrow-checker issue: Tantivy's `TokenStream` requires `&mut self`, but `StatelessTokenizer::tokenize` returns a struct that borrows the tokenizer. Pre-collection makes the stream trivially independent.
+
+All Sudachi types come from `sudachi_optimizer::sudachi::*` — the workspace's single Sudachi gateway.
 
 ---
 
-## Usage in ParadeDB
+## Use in ParadeDB
 
-This crate is used by `jurmarcus/paradedb` as an optional feature:
+`pg_search`'s `tokenizers/` crate has a `sudachi` Cargo feature gated on this dep:
 
 ```toml
-# In paradedb's tokenizers/Cargo.toml
 [features]
 sudachi = ["dep:sudachi-tantivy"]
 
@@ -138,18 +150,24 @@ sudachi = ["dep:sudachi-tantivy"]
 sudachi-tantivy = { git = "https://github.com/jurmarcus/sudachi", optional = true }
 ```
 
-The paradedb fork's `[patch.crates-io]` redirects `tantivy-tokenizer-api` to
-paradedb's forked tantivy, ensuring type compatibility across the crate boundary.
+ParadeDB's workspace uses `[patch.crates-io]` to redirect `tantivy-tokenizer-api` to its own forked tantivy, so types unify across the crate boundary.
 
----
+Build:
 
-## Related
+```bash
+just pgrx-build   # cd ~/CODE/paradedb && cargo pgrx build -p pg_search --features icu,sudachi
+just pgrx-check
+```
 
-| Project | Description |
-|---------|-------------|
-| [sudachi-search](../sudachi-search/) | B+C core this crate adapts |
-| [jurmarcus/paradedb](https://github.com/jurmarcus/paradedb) | ParadeDB fork using this crate |
-| [sudachi.rs](https://github.com/WorksApplications/sudachi.rs) | Upstream morphological analyzer |
+SQL:
+
+```sql
+CREATE INDEX docs_idx ON documents
+USING bm25(id, (content::pdb.sudachi))
+WITH (key_field='id');
+
+SELECT * FROM documents WHERE id @@@ 'content:大学';
+```
 
 ---
 

@@ -1,55 +1,36 @@
-# AGENTS.md - sudachi-sqlite
+# AGENTS.md — sudachi-sqlite
 
-Context for AI agents working on this codebase.
+Context for AI agents working on this crate.
 
-## Project Summary
+## Purpose
 
-**sudachi-sqlite** is a SQLite FTS5 tokenizer extension using Sudachi with B+C multi-granularity.
+A SQLite FTS5 loadable extension that exposes Sudachi B+C tokenisation as the `sudachi_tokenizer` tokeniser. Translates `sudachi-search`'s `SearchToken::is_colocated` into the FTS5 `FTS5_TOKEN_COLOCATED` flag (0x0001).
 
-| Attribute | Value |
-|-----------|-------|
-| Complexity | Medium (~400 LOC) |
-| Pattern | C ABI extension with FFI |
-| Key Feature | FTS5_TOKEN_COLOCATED flag |
-| Upstream | sudachi-search |
+| Attribute   | Value                                                  |
+| ----------- | ------------------------------------------------------ |
+| Type        | cdylib + rlib (~400 LOC)                               |
+| Output      | `target/release/libsudachi_sqlite.{dylib,so,dll}`      |
+| Entry point | `sudachi_fts5_tokenizer_init` (`extern "C"`)           |
+| Dependencies | `sudachi-optimizer`, `sudachi-search`, `sqlite-loadable`, `sqlite3ext-sys`, `libc` |
 
-## The Problem
-
-Japanese compound words break FTS5 search:
+## File map
 
 ```
-Document: "東京都立大学で研究"
-Query: "大学"
-
-Default FTS5: ["東京都立大学", "で", "研究"]
-→ "大学" not found (trapped inside compound)
-
-Sudachi FTS5:
-  pos 0: "東京都立大学" (flag: 0)
-  pos 0: "東京"         (flag: FTS5_TOKEN_COLOCATED)
-  pos 0: "都立"         (flag: FTS5_TOKEN_COLOCATED)
-  pos 0: "大学"         (flag: FTS5_TOKEN_COLOCATED) ← NOW SEARCHABLE
-  pos 1: "で"
-  pos 2: "研究"
+src/lib.rs        Entry point, Fts5Tokenizer, tokenize callback, dictionary loader (~200 LOC)
+src/extension.rs  FTS5 API retrieval (via SELECT fts5(?1)), tokenizer registration (~100 LOC)
+src/common.rs     ffi_panic_boundary, SQLite/FTS5 constants, callback function types (~100 LOC)
+Cargo.toml        crate-type = ["cdylib", "rlib"]
 ```
 
-## File Structure
+## Hard rules
 
-```
-sudachi-sqlite/
-├── src/
-│   ├── lib.rs          # Entry point, tokenization (~200 LOC)
-│   ├── extension.rs    # FTS5 API retrieval (~100 LOC)
-│   └── common.rs       # Panic boundary, callbacks (~100 LOC)
-├── Cargo.toml
-├── README.md
-├── CLAUDE.md
-└── AGENTS.md
-```
+1. **Never add `panic = "abort"`.** The cdylib relies on `std::panic::catch_unwind` in `ffi_panic_boundary` to convert Rust panics into SQLite error codes. `panic = "abort"` defeats `catch_unwind` and any panic becomes UB at the SQLite FFI.
+2. **Keep `crate-type = ["cdylib", "rlib"]`.** cdylib produces the loadable extension; rlib is required for `cargo test` to link the test binary. Removing either breaks the build.
+3. **All FFI entry points wrapped in `ffi_panic_boundary`.** That's `sudachi_fts5_tokenizer_init`, `xCreate`, `xDelete`, `xTokenize`. Adding a new callback? Wrap it too.
+4. **Imports go through `sudachi-optimizer::sudachi::*`.** Never `use sudachi::*` directly here.
+5. **Memory rules:** `Box::into_raw` to hand ownership to FTS5; `Box::from_raw` in `xDelete` to drop. Mismatching these leaks or double-frees.
 
-## Critical Implementation Details
-
-### Entry Point Pattern
+## Entry point pattern
 
 ```rust
 #[unsafe(no_mangle)]
@@ -59,41 +40,42 @@ pub extern "C" fn sudachi_fts5_tokenizer_init(
     p_api: *mut fts5_api,
 ) -> c_int {
     ffi_panic_boundary(|| {
-        // 1. Get FTS5 API
         let fts5_api = get_fts5_api(db, p_api)?;
-
-        // 2. Register tokenizer
         register_tokenizer(fts5_api)?;
-
         Ok(())
     })
 }
 ```
 
-### FTS5 Callback Structure
+The init symbol has to be exactly this name — that's what `.load <library> <symbol>` in SQLite invokes.
+
+## FTS5 callback signature
 
 ```rust
 type TokenFunction = extern "C" fn(
     p_ctx: *mut c_void,
-    t_flags: c_int,        // 0 or FTS5_TOKEN_COLOCATED
+    t_flags: c_int,         // 0 or FTS5_TOKEN_COLOCATED
     p_token: *const c_char,
     n_token: c_int,
-    i_start: c_int,        // Byte offset
-    i_end: c_int,          // Byte offset
+    i_start: c_int,         // BYTE offset
+    i_end: c_int,           // BYTE offset
 ) -> c_int;
 ```
 
-### Colocated Token Translation
+Byte offsets, not char offsets — `SearchToken::byte_start` / `byte_end` map straight through.
+
+## `is_colocated` translation
 
 ```rust
-// sudachi-search gives us:
-SearchToken { is_colocated: true, .. }
-
-// We translate to:
-callback.emit_colocated(...)  // Sets FTS5_TOKEN_COLOCATED = 0x0001
+for token in tokens {
+    let flags = if token.is_colocated { FTS5_TOKEN_COLOCATED } else { 0 };
+    invoke_callback(ctx, flags, &token.surface, token.byte_start, token.byte_end)?;
+}
 ```
 
-### Panic Boundary (MUST USE)
+That's the whole adapter contract. Everything else is FFI plumbing.
+
+## Panic boundary
 
 ```rust
 pub fn ffi_panic_boundary<F>(operation: F) -> c_int
@@ -102,164 +84,62 @@ where F: FnOnce() -> Result<(), c_int> + UnwindSafe
     match std::panic::catch_unwind(operation) {
         Ok(Ok(())) => SQLITE_OK,
         Ok(Err(code)) => code,
-        Err(_) => SQLITE_INTERNAL,  // Panic caught
+        Err(_) => SQLITE_INTERNAL,
     }
 }
 ```
 
-### Memory Management
+Any code that can panic must run inside this. Tokenisation can panic (allocations, dictionary errors), so the `xTokenize` callback is wrapped end-to-end.
 
-```rust
-// xCreate: Allocate on heap, return raw pointer
-let tokenizer = Box::new(Fts5Tokenizer::new(use_surface)?);
-*pp_out = Box::into_raw(tokenizer) as *mut c_void;
+## When changing this crate
 
-// xDelete: Take ownership and drop
-if !p_tokenizer.is_null() {
-    drop(unsafe { Box::from_raw(p_tokenizer as *mut Fts5Tokenizer) });
-}
-```
+### Adding a tokeniser option
 
-## API Quick Reference
+1. Parse it in `xCreate` (string args after the tokenizer name).
+2. Store on `Fts5Tokenizer` struct.
+3. Pass through to `load_tokenizer` and onward to `SearchTokenizer`.
+4. Add a unit test (uses `cargo test` — rlib makes this work).
 
-### SQL Usage
+### Returning a new SQLite error code
 
-```sql
--- Load extension
-.load ./libsudachi_sqlite sudachi_fts5_tokenizer_init
+Define the constant in `common.rs`. Map an internal `Result<_, c_int>` error to it. Don't return arbitrary integers.
 
--- Normalized form (default)
-CREATE VIRTUAL TABLE docs USING fts5(content, tokenize='sudachi_tokenizer');
+### Touching `xTokenize`
 
--- Surface form
-CREATE VIRTUAL TABLE docs USING fts5(content, tokenize='sudachi_tokenizer surface');
+The token callback walks `SearchTokenizer::tokenize(input)` and emits each token. Three failure cases:
+- Sudachi error → `SQLITE_INTERNAL`
+- Invalid UTF-8 input → `SQLITE_OK` with no tokens (FTS5 expects this on best-effort)
+- Out-of-memory in the callback → `SQLITE_NOMEM`
 
--- Search
-SELECT * FROM docs WHERE docs MATCH '大学';
-```
-
-### Tokenizer Options
-
-| Option | Description |
-|--------|-------------|
-| (none) | Normalized form (default) |
-| `surface` | Surface form |
-
-## Integration Points
-
-### Upstream: sudachi-search
-
-```rust
-use sudachi_search::SearchTokenizer;
-
-let tokens = tokenizer.tokenize(input)?;
-for token in tokens {
-    if token.is_colocated {
-        callback.emit_colocated(...)?;
-    } else {
-        callback.emit(...)?;
-    }
-}
-```
-
-### FTS5 API Retrieval
-
-```rust
-// Special SQL query to get FTS5 function pointers
-let query = "SELECT fts5(?1)";
-// Parse result to get fts5_api pointer
-```
-
-## Commands
+## Manual integration test
 
 ```bash
-just dict-setup   # Download dictionary (one-time)
-just build        # Build extension
-just install      # Install to ~/.local/lib/
-just test         # Run tests
-just test-sqlite  # Interactive SQLite test
-just rebuild      # Clean, build, and reinstall
-just fix          # Format and lint
-just env          # Show environment
+SUDACHI_DICT_PATH=~/.sudachi/system_full.dic sqlite3 test.db
+sqlite> .load ./target/release/libsudachi_sqlite sudachi_fts5_tokenizer_init
+sqlite> CREATE VIRTUAL TABLE t USING fts5(c, tokenize='sudachi_tokenizer');
+sqlite> INSERT INTO t VALUES ('東京都立大学で研究');
+sqlite> SELECT * FROM t WHERE t MATCH '大学';
 ```
 
-## Testing
-
-### Interactive SQLite Test
+## Symbol verification
 
 ```bash
-just test-sqlite
-```
-
-### Build & Test
-
-```bash
-just build
-just test
-```
-
-## Common Issues
-
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| Extension won't load | Missing `#[no_mangle]` | Add to entry point |
-| No results | SUDACHI_DICT_PATH not set | Set environment variable |
-| Crash on load | Panic crossing FFI | Wrap in `ffi_panic_boundary` |
-| UTF-8 errors | Invalid input | Returns SQLITE_OK (intentional) |
-
-## Debugging
-
-```bash
-# Check extension has correct symbol
+# macOS
 nm -gU target/release/libsudachi_sqlite.dylib | grep sudachi
-# Should show: sudachi_fts5_tokenizer_init
+# Should show:  T _sudachi_fts5_tokenizer_init
 
-# Verbose SQLite loading
-sqlite3 -cmd ".load ./libsudachi_sqlite sudachi_fts5_tokenizer_init" test.db
+# Linux
+nm -D target/release/libsudachi_sqlite.so | grep sudachi
 ```
 
-## When Modifying
+If the symbol is missing or undefined, `extern "C"` / `#[unsafe(no_mangle)]` was probably stripped or modified.
 
-### Adding Options
+## Constants
 
-1. Parse in `xCreate` callback
-2. Store in `Fts5Tokenizer` struct
-3. Pass to `load_tokenizer()`
-
-### Changing Token Output
-
-1. Modify `emit_tokens()` in `lib.rs`
-2. Keep `is_colocated` → `FTS5_TOKEN_COLOCATED` translation
-
-### FFI Safety Rules
-
-1. ALL entry points wrapped in `ffi_panic_boundary`
-2. NO panics crossing FFI boundary
-3. All memory manually managed with Box::into_raw / Box::from_raw
-4. `panic = "abort"` in release profile
-
-## Dependencies
-
-```toml
-[lib]
-crate-type = ["cdylib", "rlib"]  # rlib required for cargo test
-
-[dependencies]
-libc.workspace = true
-sqlite3ext-sys = "0.0.1"
-sqlite-loadable.workspace = true
-sudachi-search = { path = "../sudachi-search" }
-sudachi.workspace = true
-
-# CRITICAL: Do NOT add panic = "abort"
-# It disables catch_unwind, breaking ffi_panic_boundary safety
-```
-
-## SQLite Constants
-
-| Code | Constant | Value |
-|------|----------|-------|
-| SQLITE_OK | Success | 0 |
-| SQLITE_INTERNAL | Internal error | 2 |
-| SQLITE_MISUSE | API misuse | 21 |
-| FTS5_TOKEN_COLOCATED | Colocated flag | 0x0001 |
+| Constant               | Value   |
+| ---------------------- | ------- |
+| `SQLITE_OK`            | 0       |
+| `SQLITE_INTERNAL`      | 2       |
+| `SQLITE_MISUSE`        | 21      |
+| `SQLITE_NOMEM`         | 7       |
+| `FTS5_TOKEN_COLOCATED` | 0x0001  |

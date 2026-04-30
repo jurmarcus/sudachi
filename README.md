@@ -1,210 +1,241 @@
 # sudachi
 
-**Japanese morphological analysis ecosystem — Sudachi tokenizers for SQLite, PostgreSQL (ParadeDB), Tantivy, and WebAssembly.**
+**A Rust ecosystem for Japanese morphological analysis — search-engine tokenizers, conjugation, and deconjugation.**
 
-Built on [sudachi.rs](https://github.com/WorksApplications/sudachi.rs) by Works Applications.
-
----
-
-## The Problem
-
-Japanese full-text search has a fundamental problem: **compound words trap sub-words**.
-
-```
-Document: "東京都立大学で研究しています"
-Query: "大学"
-
-Traditional tokenizer (Mode C): ["東京都立大学", "で", "研究", ...]
-Result: NO MATCH — "大学" is trapped inside "東京都立大学"
-```
-
-This ecosystem solves it with **B+C multi-granularity tokenization**:
-
-```
-Sudachi Search mode:
-  pos 0: "東京都立大学"  ← compound (as written)
-  pos 0: "東京"          ← sub-token (same position!)
-  pos 0: "都立"          ← sub-token (same position!)
-  pos 0: "大学"          ← sub-token (same position!)
-  pos 1: "で"
-  pos 2: "研究"
-
-Query "大学" → MATCH ✅
-Query "東京都立大学" → MATCH ✅
-Query "東京" → MATCH ✅
-```
-
-It also handles **verb conjugations** and **character variants**:
-
-```
-食べた / 食べている / 食べます → all normalize to 食べる
-附属病院 → 付属病院 (variant kanji)
-ＳＵＭＭＥＲ → サマー (fullwidth)
-```
+Six crates that share one tokenizer core, one optimisation pipeline, and one bidirectional morphology library. Targets SQLite FTS5, Tantivy, ParadeDB (PostgreSQL), and WebAssembly.
 
 ---
 
-## Repository Structure
+## What's in here
 
 ```
 crates/
-├── sudachi-search/    # Core B+C tokenization (search-engine agnostic)
-├── sudachi-sqlite/    # SQLite FTS5 loadable extension
-├── sudachi-tantivy/   # Tantivy tokenizer adapter (used by ParadeDB)
-├── sudachi-wasm/      # WebAssembly (wasm-pack, browser/Node.js)
-└── sudachi-postgres/  # Docker infrastructure for ParadeDB + Sudachi
+├── sudachi-morphology/   # Bidirectional: forward conjugation + backward deconjugation
+├── sudachi-optimizer/    # Token-stream rewriter; the single Sudachi gateway
+├── sudachi-search/       # B+C multi-granularity tokenizer (engine-agnostic)
+├── sudachi-sqlite/       # SQLite FTS5 loadable extension (cdylib)
+├── sudachi-tantivy/      # tantivy::tokenizer::Tokenizer adapter
+└── sudachi-wasm/         # wasm-bindgen tokenizer for browser + Node.js
+
+docker/
+└── postgres/             # Docker image building ParadeDB + pg_search with the Sudachi tokenizer
 ```
 
-The **root workspace** includes `sudachi-search`, `sudachi-sqlite`, and `sudachi-tantivy`.
-The **ParadeDB integration** lives at `~/CODE/paradedb` (`jurmarcus/paradedb`).
+All six are workspace members. `sudachi-wasm` is also driven by `wasm-pack`. `docker/postgres/` is build infra; the pgrx Rust source it consumes lives in `~/CODE/paradedb` (see [Postgres integration](#postgres-via-paradedb)).
+
+---
+
+## The three problems this solves
+
+### 1. Compound words trap sub-words
+
+```text
+Document: 東京都立大学で研究
+Query:    大学
+
+Single-mode tokenizer (Mode C):    ["東京都立大学", "で", "研究"]   → no match
+B+C multi-granularity (this repo):
+  pos 0  東京都立大学   primary
+  pos 0  東京           colocated
+  pos 0  都立           colocated
+  pos 0  大学           colocated   → match
+  pos 1  で
+  pos 2  研究
+```
+
+`sudachi-search` emits the Mode C compound first, then any Mode B sub-tokens that fall inside it at the **same position**. The `SearchToken::is_colocated` flag carries that information across the FFI / engine boundary.
+
+### 2. Conjugations and inflections fragment the index
+
+Surface forms like 食べた, 食べている, 食べます all normalise to 食べる. Variant kanji (附属 → 付属), fullwidth ASCII (ＳＵＭＭＥＲ → サマー), and long-vowel marks (パーティー → パーティ) are folded the same way. Documents and queries get the same treatment, so a query in any conjugation finds all related documents.
+
+### 3. Tokenizer output is *correct against the dictionary*, not against text
+
+Sudachi's UniDic output is dictionary-correct but ships known weaknesses on compound auxiliaries (てしまう), colloquial forms (食べねえ), fused interjection+particle pairs (じゃあ), vowel elongation (おはよー), and similar surface phenomena. `sudachi-optimizer` runs a five-phase pipeline (Split → Repair → Combine → Cleanup → Disambiguation) over the raw morpheme stream and produces the corrected stream all downstream crates work from.
+
+---
+
+## How the crates compose
+
+```
+                    ┌─────────────────────────────┐
+                    │   sudachi-morphology        │   forward Verb::*() / Form::*
+                    │   (standalone — no deps)    │   backward deconjugate()
+                    └─────────────┬───────────────┘
+                                  │ used by optimizer rules
+                                  ▼
+┌──────────────────────────────────────────────────────────────┐
+│   sudachi-optimizer                                          │
+│   - the single re-export module for upstream sudachi types   │
+│   - five-phase rewriter pipeline                             │
+│   - Optimizer wraps Sudachi + chosen pipeline                │
+└──────────────────────────────┬───────────────────────────────┘
+                               │ everyone reaches Sudachi through here
+        ┌──────────────────────┼──────────────────────┐
+        ▼                      ▼                      ▼
+┌────────────────┐    ┌────────────────┐    ┌────────────────┐
+│ sudachi-search │    │ sudachi-sqlite │    │ sudachi-tantivy│
+│ B+C core       │    │ FTS5 cdylib    │    │ Tokenizer impl │
+│ SearchToken    │◄───┤                │    │                │
+│ is_colocated   │    └────────────────┘    └────────────────┘
+└───────┬────────┘                                   ▲
+        │                                            │ git dep
+        ▼                                            │
+┌────────────────┐                          ┌────────────────┐
+│ sudachi-wasm   │                          │ paradedb +     │
+│ JS bindings    │                          │ pg_search      │
+└────────────────┘                          │ (separate repo)│
+                                            └────────────────┘
+```
+
+**Key invariant:** every crate that needs `JapaneseDictionary`, `Mode`, `StatelessTokenizer`, `Tokenize`, or `SudachiError` imports them from `sudachi_optimizer::sudachi::*` — never from upstream `sudachi` directly. This gives one place to swap revs, apply optimisation rules, or change tokenizer behaviour for the whole ecosystem.
 
 ---
 
 ## Crates
 
-### `sudachi-search` — Core Library
+### `sudachi-search` — B+C tokenizer core
 
-The engine-agnostic B+C tokenization core. Every other crate depends on this.
-
-**How it works:**
+Engine-agnostic. Emits `SearchToken { surface, byte_start, byte_end, is_colocated }`. The `is_colocated: true` tokens are sub-words at the same position as the immediately preceding compound — every adapter crate's job is to translate that into its engine's "same position" mechanism.
 
 ```rust
-use sudachi_search::SearchTokenizer;
-
-let tokens = tokenizer.tokenize("東京都立大学で研究")?;
-
-// tokens:
-// SearchToken { surface: "東京都立大学", is_colocated: false }  ← pos 0
-// SearchToken { surface: "東京",         is_colocated: true }   ← pos 0
-// SearchToken { surface: "都立",         is_colocated: true }   ← pos 0
-// SearchToken { surface: "大学",         is_colocated: true }   ← pos 0
-// SearchToken { surface: "で",           is_colocated: false }  ← pos 1
-// SearchToken { surface: "研究",         is_colocated: false }  ← pos 2
+let tokenizer = SearchTokenizer::new(dictionary);
+for tok in tokenizer.tokenize("東京都立大学")? {
+    println!("{:12} colocated={}", tok.surface, tok.is_colocated);
+}
 ```
 
-The `is_colocated` flag is the adapter contract. Each downstream crate translates it:
+| Engine        | Translation of `is_colocated: true`             |
+| ------------- | ----------------------------------------------- |
+| SQLite FTS5   | `FTS5_TOKEN_COLOCATED` flag (0x0001)            |
+| Tantivy       | Position increment = 0                          |
+| Lucene/ES     | `PositionIncrementAttribute = 0`                |
+| ParadeDB      | (uses `sudachi-tantivy`)                        |
 
-| Engine | Translation |
-|--------|-------------|
-| SQLite FTS5 | `FTS5_TOKEN_COLOCATED` flag |
-| Tantivy | Position increment = 0 |
-| PostgreSQL | Via Tantivy (ParadeDB) |
-
-Also provides `CompoundWord` detection and `extract_compounds()` for compound analysis.
-
----
-
-### `sudachi-sqlite` — SQLite FTS5 Extension
-
-A cdylib loadable extension that registers `sudachi_tokenizer` for SQLite FTS5.
+### `sudachi-sqlite` — FTS5 loadable extension
 
 ```sql
--- Load extension
 .load ./libsudachi_sqlite sudachi_fts5_tokenizer_init
 
--- Create FTS5 table with Sudachi tokenizer
-CREATE VIRTUAL TABLE documents USING fts5(
-    content,
-    tokenize='sudachi_tokenizer'
-);
+CREATE VIRTUAL TABLE docs USING fts5(content, tokenize='sudachi_tokenizer');
+INSERT INTO docs VALUES ('東京都立大学で研究しています');
 
--- Insert and search
-INSERT INTO documents VALUES ('東京都立大学で研究しています');
-SELECT * FROM documents WHERE documents MATCH '大学';  -- FOUND ✅
+SELECT * FROM docs WHERE docs MATCH '大学';   -- finds the document
 ```
 
-**Tokenizer options:**
+`crate-type = ["cdylib", "rlib"]`. The cdylib is the `.dylib`/`.so`; the rlib lets `cargo test` link the test binary. All FFI entry points are wrapped in a `catch_unwind` panic boundary — `panic = "abort"` would defeat that and is deliberately not set.
 
-| Syntax | Description |
-|--------|-------------|
-| `tokenize='sudachi_tokenizer'` | Normalized form (default, better recall) |
-| `tokenize='sudachi_tokenizer surface'` | Surface form (original text) |
+### `sudachi-tantivy` — Tantivy `Tokenizer` impl
 
-Works with Python, Node.js, Go, or any language with SQLite bindings.
-
----
-
-### `sudachi-tantivy` — Tantivy Adapter
-
-Implements `tantivy::tokenizer::Tokenizer` backed by Sudachi. Used by `jurmarcus/paradedb`
-as a git dependency — provides the `SudachiTokenizer` and `SudachiTokenStream` that
-integrate with Tantivy's position-based indexing.
-
-**Split modes:**
-
-| Mode | Output for "東京都立大学" |
-|------|--------------------------|
-| A | ["東京", "都", "立", "大学"] |
-| B | ["東京", "都立", "大学"] |
-| C | ["東京都立大学"] |
-| **Search** | ["東京都立大学", "東京"\*, "都立"\*, "大学"\*] ← **default** |
-
-\* Colocated tokens (same Tantivy position)
-
----
-
-### `sudachi-wasm` — WebAssembly
-
-Compiles sudachi.rs for browser and Node.js use via wasm-pack. Excluded from the
-root workspace (wasm-pack incompatible with standard Cargo). Built with `just wasm build`.
-
-```bash
-just wasm dict-setup   # Populate resource files (one-time)
-just wasm build        # wasm-pack build → ES module
+```rust
+let tokenizer = SudachiTokenizer::new(SplitMode::Search)?;
+let mut stream = tokenizer.token_stream("東京都立大学");
+// Tokens at position 0: 東京都立大学, 東京 (colocated), 都立 (colocated), 大学 (colocated)
 ```
 
+Four split modes: A (finest), B (medium), C (coarsest), Search (B+C). Standard modes go straight through `StatelessTokenizer`; Search mode delegates to `sudachi-search`. Used by ParadeDB's `pg_search` extension as a git dep.
+
+### `sudachi-optimizer` — token-stream rewriter
+
+```rust
+let dict = Arc::new(sudachi_optimizer::load_dictionary(&dict_path)?);
+let optimizer = Optimizer::new(dict).with_pipeline(Pipeline::analysis());
+
+for m in optimizer.tokenize("食べてしまった")? {
+    println!("{}\t{:?}\t{:?}", m.surface, m.pos, m.applied_rules);
+}
+```
+
+Five-phase pipeline over the raw morpheme stream:
+
+| Phase            | Purpose                                                  |
+| ---------------- | -------------------------------------------------------- |
+| Split            | Break apart over-merged Sudachi morphemes                |
+| Repair           | Fix specific known mis-tokenisations                     |
+| Combine          | Glue together morphemes that should have been one        |
+| Cleanup          | Reclassify orphans, filter misparses                     |
+| Disambiguation   | Fix reading ambiguity using neighbouring context         |
+
+Pipelines are configurable: `Pipeline::analysis()` runs everything (the default), `Pipeline::search()` is a hook for search-friendly subsets, `Pipeline::empty()` is a test fixture.
+
+### `sudachi-morphology` — forward + backward Japanese morphology
+
+Standalone crate (no Sudachi dependency). Two complementary surfaces sharing one tag taxonomy:
+
+```rust
+// Forward: I have a verb, give me a form
+let taberu = Verb::new("食べる", VerbClass::Ichidan);
+assert_eq!(taberu.negative().surface, "食べない");
+assert_eq!(taberu.causative_passive().surface, "食べさせられる");
+
+// Backward: I see an arbitrary surface, what could it derive from?
+let forms = deconjugate("食べさせられた");
+// → contains { text: "食べる", class: Ichidan, chain: ["causative", "passive", "past"] }
+```
+
+Rules live in `data/` classified by linguistic role (stems, verb, auxiliary, adjective, copula, colloquial, dialect, keigo, irregular, negative_chain). The deconjugator builds an Aho-Corasick automaton over rule suffixes for linear-time matching. Validated against ~4,800 golden test cases covering every modern verb / adjective / copula class.
+
+### `sudachi-wasm` — browser + Node.js bindings
+
+```js
+const dictBytes = new Uint8Array(await (await fetch('/system_full.dic')).arrayBuffer());
+const tokenizer = new SudachiTokenizer(dictBytes);
+
+tokenizer.tokenize("東京都立大学で研究");
+// [{ surface: "東京都立大学", isColocated: false }, ...]
+```
+
+Built with `wasm-pack`. Targets: `web` (ES module), `nodejs`, `bundler` (webpack/vite). The crate is a thin wrapper around `sudachi-search` exposed via `wasm-bindgen`.
+
 ---
 
-### `sudachi-postgres` — ParadeDB + Sudachi
+## Postgres via ParadeDB
 
-Docker infrastructure for deploying ParadeDB with the Sudachi tokenizer. The actual
-Rust source lives at `~/CODE/paradedb` (`jurmarcus/paradedb`).
+The PostgreSQL surface is `pg_search` (a pgrx extension) with a Sudachi feature. The Rust source lives in a separate repo at `~/CODE/paradedb`; this monorepo provides:
+
+- `sudachi-tantivy` as a git dep that `pg_search --features sudachi` consumes
+- `docker/postgres/` — Docker infrastructure that clones paradedb and builds the image
 
 ```sql
--- Create BM25 index with Sudachi tokenizer
+CREATE EXTENSION pg_search;
+
 CREATE INDEX docs_idx ON documents
 USING bm25(id, (content::pdb.sudachi))
 WITH (key_field='id');
 
--- Search — finds both compound words and sub-tokens
 SELECT * FROM documents WHERE id @@@ 'content:大学';
+
+-- Mode selection via type cast argument
+content::pdb.sudachi              -- Search (B+C, default)
+content::pdb.sudachi('search')    -- explicit
+content::pdb.sudachi('c')         -- Mode C
+content::pdb.sudachi('a')         -- Mode A
 ```
 
-**Modes via type cast:**
-
-```sql
-content::pdb.sudachi           -- Search mode (B+C, default)
-content::pdb.sudachi('search') -- explicit
-content::pdb.sudachi('c')      -- Mode C (longest tokens)
-content::pdb.sudachi('a')      -- Mode A (finest)
+```bash
+just pgrx-build   # cargo pgrx build -p pg_search --features icu,sudachi (in ~/CODE/paradedb)
+just pgrx-check   # cargo check, same target
 ```
 
 ---
 
-## Quick Start
+## Quick start
 
-### Dictionary Setup (required for all crates)
+### Dictionary (one-time)
 
 ```bash
-just dict-setup   # Downloads to ~/.sudachi/system_full.dic
+just dict-setup   # downloads to ~/.sudachi/system_full.dic
 ```
 
-Or manually:
+Or set `SUDACHI_DICT_PATH=/abs/path/to/system_full.dic` explicitly.
+
+### Build & test
 
 ```bash
-mkdir -p ~/.sudachi
-curl -L https://github.com/WorksApplications/SudachiDict/releases/download/v20251022/sudachi-dictionary-20251022-full.zip -o /tmp/sudachi-dict.zip
-unzip /tmp/sudachi-dict.zip -d /tmp/sudachi-temp/
-cp /tmp/sudachi-temp/*/system_full.dic ~/.sudachi/
-rm -rf /tmp/sudachi-temp /tmp/sudachi-dict.zip
-```
-
-### Build
-
-```bash
-just build        # Release build (workspace crates)
-just test         # Run tests (unit tests, no dictionary required)
-just ci           # Full CI: fmt check + clippy + tests
+just build        # release build, all workspace crates
+just test         # workspace tests (no dictionary required)
+just ci           # fmt check + clippy -D warnings + tests — must pass before commit
+just fix          # fmt + lint
 ```
 
 ### SQLite
@@ -214,149 +245,112 @@ just build
 sqlite3 test.db ".load ./target/release/libsudachi_sqlite sudachi_fts5_tokenizer_init"
 ```
 
-### Tantivy (as a library dep)
+### Tantivy
 
 ```toml
 [dependencies]
 sudachi-tantivy = { git = "https://github.com/jurmarcus/sudachi" }
 ```
 
+### WASM
+
+```bash
+just wasm-build         # ES module for browsers
+just wasm-build-node    # Node.js
+just wasm-build-bundler # webpack / vite
+just wasm-serve         # serve the example demo at http://localhost:3000
+```
+
 ### ParadeDB (Docker)
 
 ```bash
-cd crates/sudachi-postgres/docker
+cd docker/postgres
 docker compose up
 ```
 
 ---
 
-## Architecture
+## Commands reference
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                  jurmarcus/paradedb                              │
-│   (ParadeDB fork — pg_search + Sudachi tokenizer feature)        │
-│                                                                   │
-│   pdb.sudachi → SearchTokenizer::Sudachi                         │
-└─────────────────────────┬────────────────────────────────────────┘
-                          │ git dep
-┌─────────────────────────▼────────────────────────────────────────┐
-│                   sudachi-tantivy                                 │
-│   SudachiTokenizer → SudachiTokenStream                          │
-│   is_colocated: true → position stays same                       │
-└─────────────────────────┬────────────────────────────────────────┘
-                          │ path dep
-┌─────────────────────────▼────────────────────────────────────────┐
-│                   sudachi-search                                  │
-│   SearchTokenizer: B+C core                                      │
-│   Mode C + Mode B → Vec<SearchToken { is_colocated }>            │
-└─────────────────────────┬────────────────────────────────────────┘
-                          │ workspace dep
-┌─────────────────────────▼────────────────────────────────────────┐
-│                     sudachi.rs (upstream)                         │
-│   WorksApplications morphological analyzer, 1M+ dictionary       │
-└──────────────────────────────────────────────────────────────────┘
+```text
+just                     List all commands
+just build               Release build (workspace)
+just build-dev           Dev build (workspace)
+just check               cargo check
+just test                Tests (no dictionary)
+just test-verbose        Tests with stdout
+just fmt                 cargo fmt --all
+just lint                cargo clippy --all -D warnings
+just fix                 fmt + lint
+just ci                  fmt check + clippy + test
 
-  sudachi-sqlite  ──────── sudachi-search (separate path)
-  sudachi-wasm    ──────── sudachi.rs (excluded from workspace)
-```
+just dict-setup          Download Sudachi dictionary to ~/.sudachi/
+just dict-path           Show resolved dictionary path
 
----
+just wasm-build          wasm-pack build --target web
+just wasm-build-node     wasm-pack build --target nodejs
+just wasm-build-bundler  wasm-pack build --target bundler
+just wasm-build-dev      wasm-pack build --dev (faster)
+just wasm-serve          Serve the WASM demo
 
-## Commands Reference
+just pgrx-build          Build pg_search --features icu,sudachi (in ~/CODE/paradedb)
+just pgrx-check          Check the same target
 
-```bash
-just                  # List all commands
-just build            # Build workspace (release)
-just build-dev        # Build workspace (dev)
-just check            # cargo check
-just test             # Tests (no dictionary needed)
-just test-verbose     # Tests with output
-just fmt              # Format
-just lint             # Clippy (deny warnings)
-just fix              # fmt + lint
-just ci               # Full CI pass
-
-just dict-setup       # Download Sudachi dictionary
-just dict-path        # Show resolved dictionary path
-
-just pgrx-build       # Build pg_search in ~/CODE/paradedb --features icu,sudachi
-just pgrx-check       # Check pg_search in ~/CODE/paradedb --features icu,sudachi
-
-just wasm build       # Build WebAssembly (wasm-pack)
-just wasm dict-setup  # Populate WASM resource files
-
-just env              # Show environment info
-just clean            # Clean build artifacts
+just env                 Show environment info
+just clean               cargo clean + remove WASM pkg/
 ```
 
 ---
 
-## Split Modes Explained
+## Split modes
 
-Sudachi has three base analysis modes. This ecosystem adds Search:
+```text
+Mode A  (finest)     ["東京", "都", "立", "大学"]
+Mode B  (medium)     ["東京", "都立", "大学"]
+Mode C  (coarsest)   ["東京都立大学"]
+Search  (B+C)        ["東京都立大学", "東京"*, "都立"*, "大学"*]
+                     * = colocated (same position as preceding compound)
+```
 
-| Mode | Granularity | Use Case |
-|------|-------------|----------|
-| A | Finest — splits compounds to smallest units | Character-level analysis |
-| B | Medium — preserves named entities | Named entity recognition |
-| C | Coarsest — longest tokens | Simple tokenization |
-| **Search** | **B+C simultaneously** | **Full-text search (default)** |
-
-Search mode is the key innovation: it emits the Mode C compound word first, then
-the Mode B sub-tokens at the **same position**. This lets both exact phrase queries
-AND sub-word queries match the same document.
+Search mode is the default for all consumers. It indexes both compound and sub-tokens at the same position, so exact-phrase queries and sub-word queries both succeed against the same document.
 
 ---
 
 ## Normalization
 
-All tokenizers default to **normalized form** for better recall:
+Default. Applied to both indexed text and queries.
 
-| Surface | Normalized | Reason |
-|---------|------------|--------|
-| 食べた | 食べる | Verb (past → dictionary) |
-| 食べている | 食べる | Verb (progressive → dictionary) |
-| 美しかった | 美しい | Adjective (past → dictionary) |
-| 附属病院 | 付属病院 | Variant kanji |
-| ＳＵＭＭＥＲ | サマー | Fullwidth ASCII → katakana |
-| パーティー | パーティ | Long vowel normalization |
+| Surface       | Normalised   | Reason                       |
+| ------------- | ------------ | ---------------------------- |
+| 食べた        | 食べる       | Verb (past → dictionary)     |
+| 食べている    | 食べる       | Verb (progressive)           |
+| 美しかった    | 美しい       | i-adjective past             |
+| 附属病院      | 付属病院     | Variant kanji                |
+| ＳＵＭＭＥＲ   | サマー       | Fullwidth ASCII → katakana   |
+| パーティー    | パーティ     | Long-vowel mark              |
 
-This means searching for `食べる` finds documents containing `食べた`, `食べていた`,
-`食べます`, etc. — and vice versa.
-
-Surface form is available on all tokenizers when normalization is unwanted.
+Surface form is available on every tokenizer when raw text is needed.
 
 ---
 
-## Dependency Graph
+## Workspace layout
 
-```
-sudachi-search    ──► sudachi.rs (git)
-sudachi-sqlite    ──► sudachi-search (path)
-sudachi-tantivy   ──► sudachi-search (path)
-                  ──► sudachi.rs (git, same rev)
-                  ──► tantivy-tokenizer-api
-jurmarcus/paradedb ─► sudachi-tantivy (git)
-```
+| Crate                | Type                  | Workspace? | Output                              |
+| -------------------- | --------------------- | ---------- | ----------------------------------- |
+| `sudachi-morphology` | rlib                  | yes        | Forward + backward morphology       |
+| `sudachi-optimizer`  | rlib                  | yes        | Optimised token streams + Sudachi gateway |
+| `sudachi-search`     | rlib                  | yes        | B+C SearchToken stream              |
+| `sudachi-sqlite`     | cdylib + rlib         | yes        | `libsudachi_sqlite.{so,dylib}`      |
+| `sudachi-tantivy`    | rlib                  | yes        | `tantivy::Tokenizer` impl           |
+| `sudachi-wasm`       | cdylib + rlib         | yes (also wasm-pack) | `pkg/sudachi_wasm.{wasm,js}` |
+| `docker/postgres/`   | Docker only           | n/a        | `paradedb-sudachi` image            |
 
-Root workspace Cargo.toml pins `sudachi.rs` to a specific git rev so all crates
-see the same dictionary types. `jurmarcus/paradedb` patches `tantivy-tokenizer-api`
-via `[patch.crates-io]` to ensure its forked tantivy API is used consistently.
-
----
-
-## Related
-
-| Project | Description |
-|---------|-------------|
-| [sudachi.rs](https://github.com/WorksApplications/sudachi.rs) | Upstream morphological analyzer |
-| [SudachiDict](https://github.com/WorksApplications/SudachiDict) | Dictionary releases |
-| [jurmarcus/paradedb](https://github.com/jurmarcus/paradedb) | ParadeDB fork with Sudachi |
-| [paradedb/paradedb](https://github.com/paradedb/paradedb) | Upstream ParadeDB |
+Edition 2024 throughout. Rust 1.85+. Workspace `panic` policy is the default (unwind) — sudachi-sqlite's FFI panic boundary depends on it.
 
 ---
 
 ## License
 
-Apache-2.0
+Apache-2.0 for the search/sqlite/tantivy/wasm/optimizer adapters.
+MIT for `sudachi-morphology`.
+See per-crate `Cargo.toml` for authoritative licenses.

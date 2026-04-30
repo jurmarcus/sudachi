@@ -1,90 +1,183 @@
 # sudachi monorepo
 
-Japanese morphological analysis ecosystem — Sudachi tokenizers for SQLite, PostgreSQL (ParadeDB), Tantivy, and WebAssembly.
+Six-crate Rust workspace for Japanese morphological analysis: a tokenizer core (`sudachi-search`), three search-engine adapters (`sudachi-sqlite`, `sudachi-tantivy`, `sudachi-wasm`), a token-stream optimiser that doubles as the upstream-Sudachi gateway (`sudachi-optimizer`), and a standalone bidirectional morphology library (`sudachi-morphology`).
 
-## Structure
+## Workspace structure
 
 ```
 crates/
-├── sudachi-search/    # Core: B+C multi-granularity tokenization (search-engine agnostic)
-├── sudachi-sqlite/    # Adapter: SearchToken → SQLite FTS5 colocated tokens (cdylib)
-├── sudachi-tantivy/   # Adapter: SearchToken → Tantivy (used by jurmarcus/paradedb)
-└── sudachi-wasm/      # Adapter: SearchToken → WebAssembly via wasm-bindgen
+├── sudachi-morphology/   Standalone. Forward verb/adj conjugation + backward deconjugation.
+├── sudachi-optimizer/    The single Sudachi gateway. Re-exports upstream types + 5-phase rewriter.
+├── sudachi-search/       B+C multi-granularity tokenizer. Engine-agnostic SearchToken stream.
+├── sudachi-sqlite/       SQLite FTS5 loadable extension (cdylib).
+├── sudachi-tantivy/      tantivy::tokenizer::Tokenizer adapter (used by paradedb fork).
+└── sudachi-wasm/         wasm-bindgen tokenizer for browser + Node.js.
 
 docker/
-└── postgres/          # Docker infrastructure for ParadeDB + Sudachi (no Rust source here)
+└── postgres/             Docker infra for ParadeDB + pg_search (Sudachi feature). No Rust source here.
 ```
 
-## Workspace
+All six are workspace members. `sudachi-wasm` is additionally driven by `wasm-pack`. `docker/postgres/` is a separate build target; the pgrx Rust source it consumes lives in `~/CODE/paradedb`.
 
-Root workspace members: `sudachi-search`, `sudachi-sqlite`, `sudachi-tantivy`, `sudachi-wasm`.
+## Dependency invariant: one Sudachi gateway
 
-Separate build targets:
-- `docker/postgres/` — Docker infra; Rust pgrx extension lives in `~/CODE/paradedb`
+`sudachi-optimizer` is the **only** crate that imports the upstream `sudachi` crate directly. Every other crate imports `JapaneseDictionary`, `Mode`, `StatelessTokenizer`, `Tokenize`, `SudachiError`, etc. from `sudachi_optimizer::sudachi::*`.
 
-## WASM Patch
+```rust
+// CORRECT — every consumer
+use sudachi_optimizer::sudachi::{JapaneseDictionary, Mode, StatelessTokenizer};
 
-The upstream `sudachi` crate doesn't compile for `wasm32-unknown-unknown` due to `libloading`
-(DSO plugin loading). We apply a patch from `jurmarcus/sudachi.rs` that gates the plugin loader
-behind `#[cfg(not(target_family = "wasm"))]`. See `[patch]` in root `Cargo.toml`.
+// WRONG — only sudachi-optimizer may do this
+use sudachi::dic::dictionary::JapaneseDictionary;
+```
 
-When https://github.com/WorksApplications/sudachi.rs/pull/313 merges upstream, remove the
-`[patch]` block and update the `sudachi` workspace dep back to the upstream URL.
+Why: a single gateway is the place where rev pinning, optimiser rules, and any future tokenizer swap can be applied uniformly to the whole ecosystem.
 
-## ParadeDB Integration
-
-The Postgres extension lives at `~/CODE/paradedb` (`jurmarcus/paradedb`).
-`sudachi-tantivy` is pulled in as a git dep from this monorepo:
+The workspace `Cargo.toml` documents this explicitly:
 
 ```toml
-sudachi-tantivy = { git = "https://github.com/jurmarcus/sudachi", optional = true }
+# DIRECT use of this dep is restricted to sudachi-optimizer; everything else
+# imports through sudachi-optimizer's re-exports so post-tokenisation rules
+# can apply uniformly across all consumers.
+sudachi = { git = "https://github.com/WorksApplications/sudachi.rs", rev = "..." }
 ```
+
+## Crate dependency graph
+
+```
+sudachi-morphology    (standalone — serde, daachorse, thiserror)
+       ▲
+       │ used by optimizer rules
+       │
+sudachi-optimizer  ──► sudachi.rs (upstream, pinned rev)
+       ▲
+       │ everyone reaches Sudachi through here
+       │
+sudachi-search ◄── sudachi-sqlite
+       ▲       ◄── sudachi-tantivy
+       │       ◄── sudachi-wasm
+       │
+   external: paradedb/pg_search → sudachi-tantivy (git dep)
+```
+
+## Workspace dependencies (root Cargo.toml)
+
+- `edition = "2024"`, Rust 1.85+
+- `[patch."https://github.com/WorksApplications/sudachi.rs"]` redirects to a fork that gates `libloading` behind `cfg(not(target_family = "wasm"))` — required for `sudachi-wasm` to compile to `wasm32-unknown-unknown`. The patch is invisible to non-wasm crates.
+- Release profile: `opt-level = 3`, `lto = true`, `codegen-units = 1`, `strip = true`. **No `panic = "abort"`** — `sudachi-sqlite`'s FFI boundary uses `catch_unwind`.
 
 ## Commands
 
 ```bash
-just              # List all commands
-just build        # Build workspace crates (release)
-just test         # Run workspace tests
-just fix          # Format + lint
-just ci           # Full CI: fmt check + clippy + tests
+just                  # List all
+just build            # Release build (workspace)
+just build-dev        # Dev build
+just check            # cargo check
+just test             # Workspace tests (no dictionary required)
+just test-verbose     # Tests with stdout
+just fmt              # cargo fmt --all
+just lint             # cargo clippy --all -- -D warnings
+just fix              # fmt + lint
+just ci               # fmt check + clippy + tests — gate before commit
 
-just wasm-build       # Build WASM for browser (ES module) from crates/sudachi-wasm
-just wasm-build-node  # Build WASM for Node.js
+just dict-setup       # Install dictionary to ~/.sudachi/
+just dict-path        # Show resolved dictionary path
 
-just dict-setup   # Install Sudachi dictionary to ~/.sudachi/
-just dict-path    # Show resolved dictionary path
+just wasm-build           # wasm-pack --target web
+just wasm-build-node      # wasm-pack --target nodejs
+just wasm-build-bundler   # wasm-pack --target bundler
+just wasm-build-dev       # wasm-pack --dev (faster)
+just wasm-serve           # Serve the demo at :3000
 
-just pgrx-build   # Build pg_search in ~/CODE/paradedb --features icu,sudachi
-just pgrx-check   # Check pg_search in ~/CODE/paradedb --features icu,sudachi
+just pgrx-build       # cd ~/CODE/paradedb && cargo pgrx build -p pg_search --features icu,sudachi
+just pgrx-check       # same crate, cargo check
+
+just env              # Print toolchain + dict path
+just clean            # cargo clean + remove WASM pkg/
 ```
 
 ## Dictionary
 
-Required at runtime. Auto-discovered from `~/.sudachi/system_full.dic`:
+Required at runtime by every tokenizer-using crate. Auto-discovered from `~/.sudachi/system_full.dic` (or `system_small.dic` as fallback) by the `just` recipes:
 
 ```bash
 just dict-setup
 ```
 
-Or set `SUDACHI_DICT_PATH=/path/to/system_full.dic` explicitly.
+Or override explicitly:
 
-## Key Design Facts
+```bash
+export SUDACHI_DICT_PATH=/abs/path/to/system_full.dic
+```
 
-- `sudachi-search` is the only pure-logic crate — all engine adapters depend on it
-- `is_colocated: bool` is the adapter contract; every engine translates it differently
-- `panic = "abort"` must NOT be in `sudachi-sqlite` — breaks `catch_unwind` FFI safety
-- `crate-type = ["cdylib", "rlib"]` in sudachi-sqlite — cdylib for SQLite, rlib for tests
-- `sudachi.rs` dep is pinned to a specific rev in workspace so all crates share types
+The dictionary is ~70MB and shared across crates via `Arc<JapaneseDictionary>`.
 
-## Version Control
+## Key design facts
 
-This repo uses **Sapling (sl)**, not git.
+- **`is_colocated: bool`** is the contract every search-engine adapter implements. Mode C compound first (`is_colocated: false`), then Mode B sub-tokens at the same position (`is_colocated: true`). Never reorder.
+- **B+C tokenisation does two passes** — Mode C for compounds, Mode B for sub-tokens — so it costs ~2× single-mode tokenisation. Acceptable for the recall gain.
+- **`sudachi-sqlite` keeps the unwind panic strategy.** Adding `panic = "abort"` would invalidate `std::panic::catch_unwind` and cause UB when Rust code panics across the SQLite FFI boundary.
+- **`sudachi-sqlite` has `crate-type = ["cdylib", "rlib"]`.** cdylib produces the loadable extension; rlib is required to link `cargo test`'s test binary. Both are needed.
+- **`sudachi-wasm` is excluded from a normal `cargo build` workspace pass for wasm targets** but is a workspace member so `cargo check`/`clippy` cover it on the host platform. Use `just wasm-build*` for the wasm32 target.
+- **`sudachi-morphology` has no Sudachi dependency.** It's a self-contained morphology library that the optimiser uses; it can also be used standalone for conjugation tables, deconjugation queries, etc.
+- **`sudachi.rs` is pinned** to a specific git rev in the workspace, ensuring all crates see the same dictionary types.
+
+## Algorithm: B+C tokenisation (sudachi-search)
+
+```rust
+fn tokenize_internal(input: &str) -> Vec<SearchToken> {
+    let morphemes_c = stateless.tokenize(input, Mode::C, false)?;
+    let morphemes_b = stateless.tokenize(input, Mode::B, false)?;
+
+    for morpheme_c in morphemes_c {
+        emit SearchToken { surface: c.text, is_colocated: false, ... };
+
+        for morpheme_b in morphemes_b within morpheme_c.byte_span() {
+            if morpheme_b.text != morpheme_c.text {
+                emit SearchToken { surface: b.text, is_colocated: true, ... };
+            }
+        }
+    }
+}
+```
+
+## ParadeDB integration
+
+Source: `~/CODE/paradedb` (separate repo).
+This monorepo provides:
+
+- `sudachi-tantivy` as a git dep that paradedb's `tokenizers/` consumes under a `sudachi` feature
+- `docker/postgres/` — Docker image building paradedb + pg_search
+
+Build paradedb against this monorepo's `sudachi-tantivy`:
+
+```bash
+just pgrx-build   # cd ~/CODE/paradedb && cargo pgrx build -p pg_search --features icu,sudachi
+just pgrx-check
+```
+
+Paradedb's workspace uses `[patch.crates-io]` to redirect `tantivy-tokenizer-api` to its forked tantivy, ensuring type compatibility across the crate boundary.
+
+## Per-crate docs
+
+Every crate has its own `CLAUDE.md` and `AGENTS.md` with deeper detail:
+
+- [crates/sudachi-morphology/CLAUDE.md](crates/sudachi-morphology/CLAUDE.md)
+- [crates/sudachi-optimizer/CLAUDE.md](crates/sudachi-optimizer/CLAUDE.md)
+- [crates/sudachi-search/CLAUDE.md](crates/sudachi-search/CLAUDE.md)
+- [crates/sudachi-sqlite/CLAUDE.md](crates/sudachi-sqlite/CLAUDE.md)
+- [crates/sudachi-tantivy/CLAUDE.md](crates/sudachi-tantivy/CLAUDE.md)
+- [crates/sudachi-wasm/CLAUDE.md](crates/sudachi-wasm/CLAUDE.md)
+- [docker/postgres/CLAUDE.md](docker/postgres/CLAUDE.md)
+
+## Version control
+
+This repo uses **Sapling (`sl`)**, not git.
 
 ```bash
 sl status       # Status
-sl add          # Stage new files
+sl add          # Stage
 sl commit       # Commit
-sl push         # Push to GitHub
-sl addremove    # Detect added/removed files
+sl push         # Push
+sl addremove    # Detect added/removed
 ```
