@@ -347,24 +347,31 @@ WITH (key_field='id');
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                      sudachi-postgres                            │
-│              (ParadeDB + Sudachi tokenizer)                     │
+│                pg_search (ParadeDB extension)                    │
 │                                                                  │
-│  pdb.sudachi type → SearchTokenizer::Sudachi                    │
+│  pdb.sudachi cast → SearchTokenizer::Sudachi                     │
 └──────────────────────────────┬──────────────────────────────────┘
                                │
 ┌──────────────────────────────▼──────────────────────────────────┐
 │                      sudachi-tantivy                             │
-│                  (Tantivy tokenizer adapter)                    │
+│                  (Tantivy tokenizer adapter)                     │
 │                                                                  │
-│  SplitMode::Search → colocated token positions                  │
+│  SplitMode::Search → colocated token positions                   │
 └──────────────────────────────┬──────────────────────────────────┘
                                │
 ┌──────────────────────────────▼──────────────────────────────────┐
 │                       sudachi-search                             │
-│                 (B+C multi-granularity core)                    │
+│                 (B+C multi-granularity core)                     │
 │                                                                  │
-│  Mode C + Mode B → SearchToken { is_colocated }                 │
+│  Mode C + Mode B → SearchToken { is_colocated }                  │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │ uses Sudachi types via the gateway
+┌──────────────────────────────▼──────────────────────────────────┐
+│                      sudachi-optimizer                           │
+│           (token-stream rewriter + Sudachi gateway)              │
+│                                                                  │
+│  the only crate that imports upstream `sudachi` directly;        │
+│  re-exports JapaneseDictionary / Mode / StatelessTokenizer / …   │
 └──────────────────────────────┬──────────────────────────────────┘
                                │
 ┌──────────────────────────────▼──────────────────────────────────┐
