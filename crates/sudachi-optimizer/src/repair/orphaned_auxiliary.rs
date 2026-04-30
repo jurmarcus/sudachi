@@ -83,7 +83,7 @@ pub fn apply(morphemes: Vec<Morpheme>, lexicon: &dyn Lexicon) -> Vec<Morpheme> {
         // Clone prev so we can release the immutable borrow on result
         // before mutating it inside apply_split.
         let prev_owned = prev_borrow.clone();
-        drop(prev_borrow);
+        let _ = prev_borrow;
 
         let max_window = (prev_chars.len() - 1).min(3);
         let mut repaired = false;

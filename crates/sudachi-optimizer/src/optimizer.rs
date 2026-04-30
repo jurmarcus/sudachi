@@ -103,6 +103,10 @@ impl Optimizer {
         mode: Mode,
     ) -> Result<Vec<Morpheme>, OptimizeError> {
         let morphemes = self.inner.tokenize(text, mode, false)?;
-        Ok(morphemes.iter().map(|m| Morpheme::from_sudachi(&m)).collect())
+        let lexicon = morphemes.dict().lexicon();
+        Ok(morphemes
+            .iter()
+            .map(|m| Morpheme::from_sudachi(&m, &lexicon))
+            .collect())
     }
 }

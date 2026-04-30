@@ -54,6 +54,7 @@
 //! - `data/negative_chain/` — なくて / なければ / ずに
 
 pub mod adjective;
+pub mod conjugation;
 pub mod copula;
 pub mod deconjugate;
 pub mod irregular;
@@ -65,6 +66,9 @@ pub mod verb;
 pub mod verb_class;
 
 pub use adjective::{IAdjective, NaAdjective};
+pub use conjugation::{
+    Axis, ChainStep, ChainedConjugation, Conjugation, Mood, Polarity, Politeness, Tense, Voice,
+};
 pub use copula::{conjugate_copula, conjugate_explanatory, CopulaForm};
 pub use deconjugate::{deconjugate, deconjugate_with, Form};
 

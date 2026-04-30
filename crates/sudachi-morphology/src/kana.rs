@@ -82,6 +82,26 @@ pub fn append(stem: &str, suffix: &str) -> String {
     out
 }
 
+/// Convert every katakana code point in `s` to its hiragana counterpart.
+/// Non-katakana characters (kanji, hiragana, ASCII, punctuation) are
+/// left untouched. Useful before passing a surface into the
+/// deconjugator, whose rule corpus is hiragana-only.
+///
+/// Covers `\u{30A1}–\u{30F6}` (small ァ through ヶ); the choonpu mark
+/// `ー`, half-width katakana, and katakana iteration marks pass
+/// through unchanged.
+pub fn katakana_to_hiragana(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if ('\u{30A1}'..='\u{30F6}').contains(&c) {
+                char::from_u32(c as u32 - 0x60).unwrap_or(c)
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,5 +152,14 @@ mod tests {
     fn returns_none_for_non_godan_terminals() {
         assert_eq!(shift_godan_terminal('あ', VowelRow::A), None);
         assert_eq!(shift_godan_terminal('き', VowelRow::A), None);
+    }
+
+    #[test]
+    fn katakana_to_hiragana_converts_full_width_only() {
+        assert_eq!(katakana_to_hiragana("カタカナ"), "かたかな");
+        assert_eq!(katakana_to_hiragana("食べた"), "食べた");
+        assert_eq!(katakana_to_hiragana("ケドー"), "けどー");
+        // 小書き (small kana) covered.
+        assert_eq!(katakana_to_hiragana("チャ"), "ちゃ");
     }
 }

@@ -66,7 +66,34 @@ pub fn apply(morphemes: Vec<Morpheme>, _lexicon: &dyn Lexicon) -> Vec<Morpheme> 
         if dict_match || gattari_special {
             current.surface.push_str(&next.surface);
             current.reading_form.push_str(&next.reading_form);
+            current.dictionary_form_reading.push_str(&next.dictionary_form_reading);
             current.char_range = current.char_range.start..next.char_range.end;
+            // For nominalising / verbalising suffixes, the merged
+            // result is a NEW vocab entry, not a form of the head
+            // morpheme. Update dict_form + normalized_form so vocab
+            // matchers find e.g. 大きさ (id=26823, term=大きさ) rather
+            // than the i-adj entry 大きい.
+            //
+            // Which dict_match cases produce new vocab vs verb-style
+            // conjugation:
+            // - さ      : 大きい → 大きさ        (new noun)
+            // - がる    : 怖い → 怖がる         (new godan-r verb)
+            // - ぶり/振り : 久しい → 久しぶり    (new noun/expression)
+            // - ら      : 彼 → 彼ら            (new plural pronoun)
+            // - っこ    : 行き → 行きっこ      (verbal idiom; Jiten
+            //            keeps it under the verb)
+            //
+            // Promote dict/normalized for the four nominalising cases.
+            // Leave っこ alone (it's an aspectual idiom, not a new
+            // lexeme).
+            let is_promoting_suffix = matches!(
+                next.dictionary_form.as_str(),
+                "さ" | "がる" | "ぶり" | "振り" | "ら"
+            );
+            if is_promoting_suffix {
+                current.dictionary_form = current.surface.clone();
+                current.normalized_form = current.surface.clone();
+            }
             current.record_rule(NAME);
         } else {
             out.push(current);

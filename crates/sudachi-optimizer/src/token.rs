@@ -40,6 +40,13 @@ pub struct Morpheme {
     /// differs for kana-variant inputs (`れすとらん` → `レストラン`).
     /// Mirrors [`sudachi::Morpheme::normalized_form`](crate::sudachi::Morpheme).
     pub normalized_form: String,
+    /// Reading of the dictionary (lemma) form, in hiragana. For an
+    /// inflected morpheme like `食べ` (surface) / `食べる` (dict form),
+    /// `reading_form` is `たべ` and `dictionary_form_reading` is
+    /// `たべる`. Looked up via Sudachi's `dictionary_form_word_id` in
+    /// [`Morpheme::from_sudachi`]; defaults to `dictionary_form` when
+    /// synthesised by Split stages (no Sudachi WordId available).
+    pub dictionary_form_reading: String,
     /// Raw Sudachi POS (length 6 for UniDic). Kept alongside [`pos`]
     /// because some stages need the original fine-grained sub-POS.
     /// Mirrors [`sudachi::Morpheme::part_of_speech`](crate::sudachi::Morpheme).
@@ -62,19 +69,50 @@ impl Morpheme {
     /// Build an owned [`Morpheme`] from a borrowed Sudachi morpheme.
     /// Generic over Sudachi's `DictionaryAccess` so callers can pass
     /// any morpheme regardless of how the dictionary is held.
+    ///
+    /// `lexicon` is the Sudachi lexicon — usually obtained via
+    /// `morpheme_list.dict().lexicon()`. It's needed to look up the
+    /// dictionary form's reading via the `dictionary_form_word_id`
+    /// stored on each morpheme. Passed in (rather than reached via
+    /// `m.dict()`) because `Morpheme` itself doesn't expose the
+    /// parent dictionary.
     pub fn from_sudachi<T: ::sudachi::analysis::stateless_tokenizer::DictionaryAccess>(
         m: &::sudachi::analysis::morpheme::Morpheme<'_, T>,
+        lexicon: &::sudachi::dic::lexicon_set::LexiconSet<'_>,
     ) -> Self {
+        use ::sudachi::dic::subset::InfoSubset;
+        use ::sudachi::dic::word_id::WordId;
+
         let surface: String = m.surface().to_string();
         let part_of_speech: Vec<String> = m.part_of_speech().iter().cloned().collect();
         let pos = Pos::from_part_of_speech(&part_of_speech);
         let begin = m.begin_c();
         let end = m.end_c();
+        let reading_form = m.reading_form().to_string();
+
+        // Lemma reading: when this morpheme IS the dictionary form
+        // (`dfwi == -1`), reading_form already is the lemma reading.
+        // Otherwise, look it up via the dictionary lexicon.
+        let dictionary_form_reading = {
+            let word_info = m.get_word_info();
+            let dfwi = word_info.dictionary_form_word_id();
+            if dfwi < 0 {
+                reading_form.clone()
+            } else {
+                let dict_wid = WordId::from_raw(dfwi as u32);
+                lexicon
+                    .get_word_info_subset(dict_wid, InfoSubset::READING_FORM)
+                    .map(|info| info.reading_form().to_string())
+                    .unwrap_or_default()
+            }
+        };
+
         Self {
             surface,
-            reading_form: m.reading_form().to_string(),
+            reading_form,
             dictionary_form: m.dictionary_form().to_string(),
             normalized_form: m.normalized_form().to_string(),
+            dictionary_form_reading,
             part_of_speech,
             pos,
             char_range: begin..end,
@@ -83,7 +121,9 @@ impl Morpheme {
     }
 
     /// Convenience for stages that fabricate morphemes (Split rules).
-    /// Computes [`pos`] from the supplied `part_of_speech`.
+    /// Computes [`pos`] from the supplied `part_of_speech`. Defaults
+    /// `dictionary_form_reading` to `dictionary_form` (no Sudachi
+    /// WordId is available for fabricated morphemes).
     pub fn synthesize(
         surface: impl Into<String>,
         reading_form: impl Into<String>,
@@ -95,12 +135,14 @@ impl Morpheme {
         let reading_form = reading_form.into();
         let dictionary_form = dictionary_form.into();
         let normalized_form = dictionary_form.clone();
+        let dictionary_form_reading = dictionary_form.clone();
         let pos = Pos::from_part_of_speech(&part_of_speech);
         Self {
             surface,
             reading_form,
             dictionary_form,
             normalized_form,
+            dictionary_form_reading,
             part_of_speech,
             pos,
             char_range,

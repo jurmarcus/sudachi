@@ -52,9 +52,15 @@ pub fn apply(morphemes: Vec<Morpheme>, _lexicon: &dyn Lexicon) -> Vec<Morpheme> 
                     let mut merged = next.clone();
                     merged.surface = format!("{}{}", cur.surface, next.surface);
                     merged.reading_form = format!("{}{}", cur.reading_form, next.reading_form);
-                    merged.char_range = cur.char_range.start..next.char_range.end;
                     merged.dictionary_form = "となる".to_string();
                     merged.normalized_form = "なる".to_string();
+                    // Lemma reading: lookup keys for となる use となる
+                    // (full compound). Without this, the merged token
+                    // has dict_form=となる but dict_form_reading=なる
+                    // (cloned from `next`), which is a self-inconsistent
+                    // shape. Match the dict_form pattern of に+は → には.
+                    merged.dictionary_form_reading = "となる".to_string();
+                    merged.char_range = cur.char_range.start..next.char_range.end;
                     merged.record_rule(NAME);
                     out.push(merged);
                     i += 2;

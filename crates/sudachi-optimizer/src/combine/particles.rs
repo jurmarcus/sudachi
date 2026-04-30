@@ -78,6 +78,30 @@ pub fn apply(morphemes: Vec<Morpheme>, _lexicon: &dyn Lexicon) -> Vec<Morpheme> 
                 merged.surface = combined_text.to_string();
                 merged.reading_form = format!("{}{}", cur.reading_form, nxt.reading_form);
                 merged.char_range = cur.char_range.start..nxt.char_range.end;
+                // Update dict_form + normalized_form to the fused surface.
+                // Without this, the merged token has `surface=には` but
+                // `dict_form=に` (cloned from the first component), which
+                // forces every downstream grammar/vocab matcher to treat
+                // the compound as a "に in disguise". Consumers looking
+                // up grammar by dict_form would hit grammar pattern `に`
+                // (the bare locative) instead of pattern `には` (the
+                // topic-marked locative — a distinct grammar point).
+                //
+                // The fused surface IS the dictionary form of the
+                // compound — `には` has a dedicated grammar entry, just
+                // like `とは`, `では`, `のに`. Setting dict_form here
+                // keeps the morpheme's "what is this?" signal
+                // self-consistent.
+                //
+                // dictionary_form_reading is rebuilt from concatenated
+                // reading_forms for the same reason — the fused
+                // compound's lemma reading is the concat of components.
+                merged.dictionary_form = combined_text.to_string();
+                merged.normalized_form = combined_text.to_string();
+                merged.dictionary_form_reading = format!(
+                    "{}{}",
+                    cur.dictionary_form_reading, nxt.dictionary_form_reading
+                );
                 merged.record_rule(NAME);
 
                 // では-extension: では + ない/無い (+ optional か).
@@ -146,6 +170,42 @@ mod tests {
         let out = apply(vec![ni, wa], &EmptyLexicon);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].surface, "には");
+        // dict_form must match the fused surface, NOT the first
+        // component's dict_form. Without this, downstream grammar
+        // matchers looking up by dict_form see `に` and miss the
+        // dedicated `には` grammar entry.
+        assert_eq!(out[0].dictionary_form, "には");
+        assert_eq!(out[0].normalized_form, "には");
+    }
+
+    #[test]
+    fn merged_dewa_has_consistent_surface_and_dict() {
+        let de = synth("で", "で", &["助詞"], 0..1);
+        let wa = synth("は", "は", &["助詞"], 1..2);
+        let out = apply(vec![de, wa], &EmptyLexicon);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].surface, "では");
+        assert_eq!(out[0].dictionary_form, "では");
+    }
+
+    #[test]
+    fn merged_toha_has_consistent_surface_and_dict() {
+        let to = synth("と", "と", &["助詞"], 0..1);
+        let wa = synth("は", "は", &["助詞"], 1..2);
+        let out = apply(vec![to, wa], &EmptyLexicon);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].surface, "とは");
+        assert_eq!(out[0].dictionary_form, "とは");
+    }
+
+    #[test]
+    fn merged_noni_has_consistent_surface_and_dict() {
+        let no = synth("の", "の", &["助詞"], 0..1);
+        let ni = synth("に", "に", &["助詞"], 1..2);
+        let out = apply(vec![no, ni], &EmptyLexicon);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].surface, "のに");
+        assert_eq!(out[0].dictionary_form, "のに");
     }
 
     #[test]

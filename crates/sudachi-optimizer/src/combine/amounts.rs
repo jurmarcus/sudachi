@@ -44,6 +44,7 @@ const AMOUNT_COMBINATIONS: &[(&str, &str)] = &[
     ("二", "つ"),
     ("三", "つ"),
     ("一", "日"),
+    ("二", "日"),
     ("一", "人"),
     ("二", "人"),
     ("三", "人"),
@@ -55,6 +56,12 @@ const AMOUNT_COMBINATIONS: &[(&str, &str)] = &[
     ("一", "回"),
     ("二", "回"),
     ("三", "回"),
+    ("一", "階"),
+    ("二", "階"),
+    ("三", "階"),
+    ("一", "個"),
+    ("二", "個"),
+    ("三", "個"),
 ];
 
 pub fn stage() -> Stage {
@@ -79,7 +86,16 @@ pub fn apply(morphemes: Vec<Morpheme>, _lexicon: &dyn Lexicon) -> Vec<Morpheme> 
         if current_is_amount && pair_known {
             current.surface.push_str(&next.surface);
             current.reading_form.push_str(&next.reading_form);
+            current.dictionary_form_reading.push_str(&next.dictionary_form_reading);
             current.char_range = current.char_range.start..next.char_range.end;
+            // The merged amount is a counter expression (三人, 一日,
+            // 五千円) — its own vocab entry, not an inflected form of
+            // the head numeral. Update dict_form + normalized_form
+            // so vocab lookup finds the compound counter rather than
+            // the bare numeral. Same rationale as the particle fix
+            // for には, とは, etc.
+            current.dictionary_form = current.surface.clone();
+            current.normalized_form = current.surface.clone();
             current.pos = Pos::Noun;
             current.part_of_speech = vec!["名詞".into()];
             current.record_rule(NAME);
