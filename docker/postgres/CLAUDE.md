@@ -2,6 +2,8 @@
 
 Docker infrastructure for running ParadeDB with the Sudachi Japanese tokenizer.
 
+User-facing usage docs are in [`README.md`](README.md). This file covers the build internals and gotchas.
+
 ## What this is
 
 This directory contains **only Docker infrastructure** — no Rust source. The pgrx Rust extension (`pg_search`) it builds lives in a separate repo at `~/CODE/paradedb` (`jurmarcus/paradedb`).

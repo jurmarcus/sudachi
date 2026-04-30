@@ -87,7 +87,40 @@ Now searches for "大学", "東京", or "東京都立大学" all match.
 
 ## Installation
 
-### Prerequisites
+Two paths: the Docker image in this directory (recommended), or a local build via `cargo pgrx install`.
+
+### Option 1: Docker (recommended)
+
+```bash
+# From this directory (docker/postgres/)
+docker compose up
+```
+
+The provided `docker-compose.yml` pulls `paradedb/paradedb:latest`. To build a custom image with the Sudachi feature compiled in (using the local `Dockerfile`):
+
+```bash
+docker build \
+  --build-arg PG_SEARCH_FEATURES="icu,sudachi" \
+  -t paradedb-sudachi .
+
+docker run --rm -p 5432:5432 \
+  -e POSTGRES_USER=myuser \
+  -e POSTGRES_PASSWORD=mypassword \
+  -e POSTGRES_DB=mydatabase \
+  paradedb-sudachi
+```
+
+The Dockerfile clones `jurmarcus/paradedb`, downloads the Sudachi dictionary, builds `pg_search --features icu,sudachi`, and sets `SUDACHI_DICT_PATH` for the runtime postgres process.
+
+For dev:
+
+```bash
+docker compose -f docker-compose.dev.yml up
+```
+
+### Option 2: Local build with cargo-pgrx
+
+#### Prerequisites
 
 ```bash
 # PostgreSQL 17
@@ -98,7 +131,7 @@ cargo install cargo-pgrx@0.16.1
 cargo pgrx init --pg17=$(brew --prefix postgresql@17)/bin/pg_config
 ```
 
-### Dictionary Setup
+#### Dictionary setup
 
 ```bash
 # Download Sudachi dictionary
@@ -110,7 +143,7 @@ unzip /tmp/sudachi-dict.zip -d ~/.sudachi/
 export SUDACHI_DICT_PATH=~/.sudachi/sudachi-dictionary-20241021/system_small.dic
 ```
 
-### Build
+#### Build
 
 ```bash
 cd pg_search
@@ -119,7 +152,14 @@ RUSTFLAGS="-Clink-arg=-Wl,-undefined,dynamic_lookup" \
 cargo pgrx install --no-default-features --features sudachi,pg17
 ```
 
-### Run PostgreSQL
+Or from the workspace root:
+
+```bash
+just pgrx-build   # cargo pgrx build -p pg_search --features icu,sudachi (in ~/CODE/paradedb)
+just pgrx-check
+```
+
+#### Run PostgreSQL
 
 **Important**: PostgreSQL must have `SUDACHI_DICT_PATH` set:
 
@@ -329,7 +369,7 @@ WITH (key_field='id');
                                │
 ┌──────────────────────────────▼──────────────────────────────────┐
 │                        sudachi.rs                                │
-│              (Morphological analyzer by WAP)                    │
+│                  (Morphological analyzer)                        │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -351,15 +391,16 @@ ParadeDB includes Lindera for Japanese. Here's why you might prefer Sudachi:
 
 ---
 
-## Related Projects
+## Related
 
 | Project | Description |
 |---------|-------------|
-| [ParadeDB](https://github.com/paradedb/paradedb) | Base project - PostgreSQL full-text search |
-| [sudachi-search](https://github.com/jurmarcus/sudachi-search) | B+C multi-granularity core |
-| [sudachi-tantivy](https://github.com/jurmarcus/sudachi-tantivy) | Tantivy tokenizer adapter |
-| [sudachi-sqlite](https://github.com/jurmarcus/sudachi-sqlite) | SQLite FTS5 |
-| [sudachi.rs](https://github.com/WorksApplications/sudachi.rs) | Upstream morphological analyzer |
+| [ParadeDB](https://github.com/paradedb/paradedb) | PostgreSQL full-text search platform |
+| [`sudachi-search`](../../crates/sudachi-search/) | B+C multi-granularity core |
+| [`sudachi-tantivy`](../../crates/sudachi-tantivy/) | Tantivy tokenizer adapter |
+| [`sudachi-sqlite`](../../crates/sudachi-sqlite/) | SQLite FTS5 extension |
+| [`sudachi-optimizer`](../../crates/sudachi-optimizer/) | Token-stream rewriter + Sudachi gateway |
+| [`sudachi-morphology`](../../crates/sudachi-morphology/) | Forward + backward Japanese morphology |
 
 ---
 
