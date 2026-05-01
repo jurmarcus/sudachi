@@ -42,6 +42,31 @@ pub struct SudachiMorpheme {
     pub dictionary_form: String,
 }
 
+/// Tunable for `Pipeline::parse_morphemes_with_config`. `Default` preserves
+/// the legacy hardcoded behavior: 4 buckets when `n_chunks >= 8`, else 1
+/// bucket. Override via `Some(_)` for benchmarks that need to vary the
+/// bucketing strategy.
+#[derive(Debug, Clone, Copy)]
+pub struct BucketingConfig {
+    /// `None` = legacy heuristic (4 buckets if
+    /// `n_chunks >= min_chunks_for_bucketing`, else 1). `Some(n)` = force
+    /// exactly `n` buckets, capped at `n_chunks`. `Some(1)` disables
+    /// bucketing entirely.
+    pub num_buckets: Option<usize>,
+    /// Below this chunk count, the heuristic falls back to 1 bucket
+    /// (no benefit from bucketing tiny batches — pure overhead).
+    pub min_chunks_for_bucketing: usize,
+}
+
+impl Default for BucketingConfig {
+    fn default() -> Self {
+        Self {
+            num_buckets: None,
+            min_chunks_for_bucketing: 8,
+        }
+    }
+}
+
 impl Pipeline {
     /// Load both modules from a directory, defaulting to CUDA when the
     /// `cuda` feature is enabled and a CUDA device is available, otherwise
@@ -55,14 +80,10 @@ impl Pipeline {
     /// `Device::Cpu` for portable testing or `Device::new_cuda(0)` for
     /// GPU inference.
     pub fn load_with_device(checkpoint_dir: &Path, device: candle_core::Device) -> Result<Self> {
-        let char_cp = Checkpoint::load_with_device(
-            &checkpoint_dir.join("char.safetensors"),
-            device.clone(),
-        )?;
-        let word_cp = Checkpoint::load_with_device(
-            &checkpoint_dir.join("word.safetensors"),
-            device.clone(),
-        )?;
+        let char_cp =
+            Checkpoint::load_with_device(&checkpoint_dir.join("char.safetensors"), device.clone())?;
+        let word_cp =
+            Checkpoint::load_with_device(&checkpoint_dir.join("word.safetensors"), device.clone())?;
         let char_vocab = checkpoint_dir.join("kwja-char/vocab.txt");
         let word_tokenizer = checkpoint_dir.join("kwja-tokenizer/tokenizer.json");
         Ok(Self {
@@ -94,7 +115,6 @@ fn default_device() -> candle_core::Device {
 }
 
 impl Pipeline {
-
     /// Full pipeline on a batch of texts. One ParseItem per input.
     /// Per-item failures come back as `ParseItem::Error`; never atomic.
     pub fn parse(&self, texts: &[&str]) -> Result<Vec<ParseItem>> {
@@ -119,10 +139,7 @@ impl Pipeline {
     /// Sudachi data wins for: surface, reading, lemma, conjtype, conjform.
     /// KWJA wins for: dependency parents (when word counts align).
     /// Sudachi POS is mapped to KWJA pos/subpos slots via `sudachi_to_sentence`.
-    pub fn parse_morphemes(
-        &self,
-        sentences: &[Vec<SudachiMorpheme>],
-    ) -> Result<Vec<ParseItem>> {
+    pub fn parse_morphemes(&self, sentences: &[Vec<SudachiMorpheme>]) -> Result<Vec<ParseItem>> {
         if sentences.is_empty() {
             return Ok(vec![]);
         }
@@ -168,9 +185,7 @@ impl Pipeline {
         //   order before going into per_input by orig_idx.
         let n_chunks = chunks_owned.len();
         let mut order: Vec<usize> = (0..n_chunks).collect();
-        order.sort_by(|&a, &b| {
-            chunks_owned[b].len().cmp(&chunks_owned[a].len())
-        });
+        order.sort_by(|&a, &b| chunks_owned[b].len().cmp(&chunks_owned[a].len()));
 
         // Bucket count heuristic: 4 buckets when we have ≥8 chunks, else 1
         // (no benefit from bucketing tiny batches — pure overhead).
@@ -201,7 +216,8 @@ impl Pipeline {
         // decode_element_from_logits returns a full Document with multiple
         // Sentences (split internally at sentence boundaries) plus
         // discourse_relations populated from cross-sentence pairs.
-        let mut per_element_doc: Vec<Option<Document>> = (0..sentences.len()).map(|_| None).collect();
+        let mut per_element_doc: Vec<Option<Document>> =
+            (0..sentences.len()).map(|_| None).collect();
         for (chunk_idx, logits_opt) in chunk_logits.into_iter().enumerate() {
             let chunk = &chunks_owned[chunk_idx];
             let orig_idx = chunk_origins[chunk_idx];
@@ -227,8 +243,10 @@ impl Pipeline {
         }
 
         // Empty inputs get one empty Sentence; matches previous behavior.
-        let out: Vec<ParseItem> = per_element_doc.into_iter().enumerate().map(|(i, doc_opt)| {
-            match doc_opt {
+        let out: Vec<ParseItem> = per_element_doc
+            .into_iter()
+            .enumerate()
+            .map(|(i, doc_opt)| match doc_opt {
                 Some(d) => ParseItem::Tree(d),
                 None => ParseItem::Tree(Document {
                     sentences: vec![Sentence {
@@ -243,8 +261,8 @@ impl Pipeline {
                     }],
                     discourse_relations: vec![],
                 }),
-            }
-        }).collect();
+            })
+            .collect();
         Ok(out)
     }
 
@@ -308,8 +326,8 @@ impl Pipeline {
                 .position(|s| s == "談話関係なし")
                 .unwrap_or(0);
             // Softmax over the relation axis (axis 3) for thresholding.
-            let dis_softmax = candle_nn::ops::softmax(&word_logits.discourse_logits, 3)
-                .map_err(Error::from)?;
+            let dis_softmax =
+                candle_nn::ops::softmax(&word_logits.discourse_logits, 3).map_err(Error::from)?;
             let dis_t = dis_softmax
                 .squeeze(0)
                 .map_err(Error::from)?
@@ -335,11 +353,7 @@ impl Pipeline {
                             .iter()
                             .position(|m| !is_function_pos(&m.pos))
                             .unwrap_or(0);
-                        predicates.push((
-                            si,
-                            bi,
-                            sent_word_offset + bp_word_offset + head_in_bp,
-                        ));
+                        predicates.push((si, bi, sent_word_offset + bp_word_offset + head_in_bp));
                     }
                     bp_word_offset += bp.morphemes.len();
                 }
@@ -381,7 +395,10 @@ impl Pipeline {
             }
         }
 
-        Ok(Document { sentences, discourse_relations })
+        Ok(Document {
+            sentences,
+            discourse_relations,
+        })
     }
 
     fn parse_sentence_from_sudachi(&self, sudachi: &[SudachiMorpheme]) -> Result<Sentence> {
@@ -491,10 +508,9 @@ impl Pipeline {
             .iter()
             .enumerate()
             .map(|(i, m)| {
-                let mut pos = sudachi_to_kwja_pos(
-                    m.pos.first().map(String::as_str).unwrap_or_default(),
-                )
-                .to_string();
+                let mut pos =
+                    sudachi_to_kwja_pos(m.pos.first().map(String::as_str).unwrap_or_default())
+                        .to_string();
                 let mut subpos = sudachi_to_kwja_subpos(m.pos.get(1).map(String::as_str));
 
                 if let Some(&pos_id) = kwja_pos_argmax.get(i) {
@@ -576,7 +592,8 @@ impl Pipeline {
         // like "節区切" (key=節区切, value="true"). We read at each BP's head
         // morpheme via reconstruct_phrases.
         const BP_FEATURE_THRESHOLD: f32 = 0.5;
-        let bp_features_per_word: Vec<Vec<crate::document::KeyValue>> = if word_logits.num_words > 0 {
+        let bp_features_per_word: Vec<Vec<crate::document::KeyValue>> = if word_logits.num_words > 0
+        {
             let probs_t = word_logits
                 .bp_feature_probs
                 .to_dtype(candle_core::DType::F32)
@@ -642,7 +659,8 @@ impl Pipeline {
             bp_head_word.push(cumulative + head_word_offset);
             for k in 0..bp.morphemes.len() {
                 if cumulative + k < word_to_bp.len() {
-                    word_to_bp[cumulative + k] = base_phrases.len() - 1 - (base_phrases.len() - bp_head_word.len());
+                    word_to_bp[cumulative + k] =
+                        base_phrases.len() - 1 - (base_phrases.len() - bp_head_word.len());
                 }
             }
             cumulative += bp.morphemes.len();
@@ -668,7 +686,10 @@ impl Pipeline {
             let ne_labels = &labels.ne;
             let mut span_start: Option<(usize, String)> = None;
             for (i, &id) in ne_argmax.iter().enumerate() {
-                let label = ne_labels.get(id as usize).cloned().unwrap_or_else(|| "O".into());
+                let label = ne_labels
+                    .get(id as usize)
+                    .cloned()
+                    .unwrap_or_else(|| "O".into());
                 let (prefix, ne_type) = if let Some((p, t)) = label.split_once('-') {
                     (p, t.to_string())
                 } else {
@@ -681,7 +702,14 @@ impl Pipeline {
                 };
                 if close_span {
                     if let Some((start, ne_t)) = span_start.take() {
-                        emit_ne_feature(&mut base_phrases, &word_to_bp, &morphemes, start, i, &ne_t);
+                        emit_ne_feature(
+                            &mut base_phrases,
+                            &word_to_bp,
+                            &morphemes,
+                            start,
+                            i,
+                            &ne_t,
+                        );
                     }
                 }
                 if prefix == "B" {
@@ -736,9 +764,8 @@ impl Pipeline {
             let num_r = labels.cohesion_relations.len();
 
             // Helper: does this BP carry feature with key matching `key`?
-            let bp_has_feature = |bp: &BasePhrase, key: &str| -> bool {
-                bp.features.iter().any(|kv| kv.key == key)
-            };
+            let bp_has_feature =
+                |bp: &BasePhrase, key: &str| -> bool { bp.features.iter().any(|kv| kv.key == key) };
 
             // Pre-compute per-BP source-flags so we can also use them to
             // gate the TARGET. KWJA's full mask restricts both sides:
@@ -791,9 +818,8 @@ impl Pipeline {
                     // forward-looking relations (我々 referring to a noun
                     // that appears later in the sentence) which are
                     // grammatically impossible in this language.
-                    let is_anaphoric =
-                        BRIDGING_RELS.contains(&rel_type.as_str())
-                            || COREF_RELS.contains(&rel_type.as_str());
+                    let is_anaphoric = BRIDGING_RELS.contains(&rel_type.as_str())
+                        || COREF_RELS.contains(&rel_type.as_str());
                     let mut best_target = 0usize;
                     let mut best_prob = f32::NEG_INFINITY;
                     for tgt in 0..num_w {
@@ -826,12 +852,14 @@ impl Pipeline {
                         Some(b) => b,
                         None => continue,
                     };
-                    base_phrases[src_bp_idx].relations.push(crate::document::Relation {
-                        r#type: rel_type.clone(),
-                        target: format!("bp{target_bp_idx}"),
-                        sid: String::new(),
-                        id: format!("{}", target_bp_idx),
-                    });
+                    base_phrases[src_bp_idx]
+                        .relations
+                        .push(crate::document::Relation {
+                            r#type: rel_type.clone(),
+                            target: format!("bp{target_bp_idx}"),
+                            sid: String::new(),
+                            id: format!("{}", target_bp_idx),
+                        });
                 }
             }
         }
@@ -868,7 +896,10 @@ impl Pipeline {
         for sentence_text in &sentences_text {
             sentences.push(self.parse_sentence(sentence_text)?);
         }
-        Ok(Document { sentences, discourse_relations: vec![] })
+        Ok(Document {
+            sentences,
+            discourse_relations: vec![],
+        })
     }
 
     /// Run the word module on a single sentence and decode morphemes +
@@ -962,10 +993,12 @@ fn emit_ne_feature(
         Some(b) if b < base_phrases.len() => b,
         _ => return,
     };
-    base_phrases[bp_idx].features.push(crate::document::KeyValue {
-        key: "NE".to_string(),
-        value: format!("{ne_type}:{surface}"),
-    });
+    base_phrases[bp_idx]
+        .features
+        .push(crate::document::KeyValue {
+            key: "NE".to_string(),
+            value: format!("{ne_type}:{surface}"),
+        });
 }
 
 fn reconstruct_phrases(
@@ -986,8 +1019,8 @@ fn reconstruct_phrases(
     // available, we group by feature boundaries (matches KWJA-Python's
     // emission). Falling back to the content-word heuristic only when
     // features aren't available (raw-text path or empty predictions).
-    let use_feature_boundaries = !word_features_per_morph.is_empty()
-        && word_features_per_morph.len() == morphemes.len();
+    let use_feature_boundaries =
+        !word_features_per_morph.is_empty() && word_features_per_morph.len() == morphemes.len();
     let mut groups: Vec<Vec<usize>> = Vec::new();
     let mut current: Vec<usize> = Vec::new();
     for (i, m) in morphemes.iter().enumerate() {
@@ -995,7 +1028,10 @@ fn reconstruct_phrases(
             current.push(i);
             // KWJA convention: "基本句-区切" marks the LAST morpheme of the
             // base_phrase, so we close the group AFTER pushing this one.
-            if word_features_per_morph[i].iter().any(|f| f == "基本句-区切") {
+            if word_features_per_morph[i]
+                .iter()
+                .any(|f| f == "基本句-区切")
+            {
                 groups.push(std::mem::take(&mut current));
             }
         } else {
@@ -1029,15 +1065,18 @@ fn reconstruct_phrases(
     for (bp_id, group) in groups.iter().enumerate() {
         let group_morphs: Vec<Morpheme> = group.iter().map(|&i| morphemes[i].clone()).collect();
         let surface: String = group_morphs.iter().map(|m| m.surface.as_str()).collect();
-        let head_word_idx = *group.iter().find(|&&i| !is_function_pos(&morphemes[i].pos))
+        let head_word_idx = *group
+            .iter()
+            .find(|&&i| !is_function_pos(&morphemes[i].pos))
             .unwrap_or(&group[0]);
-        let head_pos = morphemes.get(head_word_idx).map(|m| m.pos.as_str()).unwrap_or("");
+        let head_pos = morphemes
+            .get(head_word_idx)
+            .map(|m| m.pos.as_str())
+            .unwrap_or("");
 
         let head: i32 = if bp_id as i32 == last_bp {
             -1
-        } else if matches!(head_pos, "形容詞" | "連体詞")
-            && (bp_id as i32 + 1) <= last_bp
-        {
+        } else if matches!(head_pos, "形容詞" | "連体詞") && (bp_id as i32 + 1) <= last_bp {
             // Modifier-only bp attaches to immediate next bp.
             (bp_id + 1) as i32
         } else {
@@ -1055,7 +1094,10 @@ fn reconstruct_phrases(
 
         // BP features: same — read at the BP's head morpheme. Empty if
         // logits unavailable.
-        let features = bp_features_per_word.get(head_word_idx).cloned().unwrap_or_default();
+        let features = bp_features_per_word
+            .get(head_word_idx)
+            .cloned()
+            .unwrap_or_default();
 
         base_phrases.push(BasePhrase {
             id: bp_id as u32,
@@ -1213,7 +1255,7 @@ pub fn sudachi_to_kwja_pos(sudachi_pos: &str) -> &'static str {
         "名詞" => "名詞",
         "動詞" => "動詞",
         "形容詞" => "形容詞",
-        "形状詞" => "形容詞",  // Sudachi 形状詞 (na-adjectives) → KWJA 形容詞
+        "形状詞" => "形容詞", // Sudachi 形状詞 (na-adjectives) → KWJA 形容詞
         "副詞" => "副詞",
         "連体詞" => "連体詞",
         "接続詞" => "接続詞",
@@ -1222,8 +1264,8 @@ pub fn sudachi_to_kwja_pos(sudachi_pos: &str) -> &'static str {
         "助動詞" => "助動詞",
         "接頭辞" => "接頭辞",
         "接尾辞" => "接尾辞",
-        "代名詞" => "指示詞",  // Sudachi 代名詞 (pronouns) → KWJA 指示詞
-        "補助記号" => "特殊",  // punctuation
+        "代名詞" => "指示詞", // Sudachi 代名詞 (pronouns) → KWJA 指示詞
+        "補助記号" => "特殊", // punctuation
         "記号" => "特殊",
         "空白" => "特殊",
         _ => "特殊",
@@ -1403,14 +1445,23 @@ mod tests {
                     let s = &doc.sentences[0];
                     assert!(!s.morphemes.is_empty());
                     // BasePhrase + Phrase reconstruction populates these now.
-                    assert!(!s.base_phrases.is_empty(),
-                        "base_phrases should be populated by reconstruct_phrases");
-                    assert_eq!(s.base_phrases.len(), s.phrases.len(),
-                        "v0.1: each BasePhrase becomes its own Phrase");
+                    assert!(
+                        !s.base_phrases.is_empty(),
+                        "base_phrases should be populated by reconstruct_phrases"
+                    );
+                    assert_eq!(
+                        s.base_phrases.len(),
+                        s.phrases.len(),
+                        "v0.1: each BasePhrase becomes its own Phrase"
+                    );
                     // BasePhrase morphemes should sum to the sentence's flat list.
-                    let bp_morph_count: usize = s.base_phrases.iter().map(|bp| bp.morphemes.len()).sum();
-                    assert_eq!(bp_morph_count, s.morphemes.len(),
-                        "every morpheme must belong to exactly one base_phrase");
+                    let bp_morph_count: usize =
+                        s.base_phrases.iter().map(|bp| bp.morphemes.len()).sum();
+                    assert_eq!(
+                        bp_morph_count,
+                        s.morphemes.len(),
+                        "every morpheme must belong to exactly one base_phrase"
+                    );
                 }
                 ParseItem::Error { kind, message } => {
                     panic!("unexpected parse error: {kind}: {message}");
@@ -1428,13 +1479,12 @@ mod tests {
             mk_morph("晴れ", "名詞"),
             mk_morph("です", "助動詞"),
         ];
-        let dep_parents = vec![-1, 0, -1, 2];  // word 1→0, word 3→2, others root
+        let dep_parents = vec![-1, 0, -1, 2]; // word 1→0, word 3→2, others root
         let dep_types: Vec<String> = vec![];
         let bp_feats: Vec<Vec<crate::document::KeyValue>> = vec![];
         let word_feats: Vec<Vec<String>> = vec![];
-        let (phrases, base_phrases) = reconstruct_phrases(
-            &morphemes, &dep_parents, &dep_types, &bp_feats, &word_feats,
-        );
+        let (phrases, base_phrases) =
+            reconstruct_phrases(&morphemes, &dep_parents, &dep_types, &bp_feats, &word_feats);
         // Two content heads (今日, 晴れ) → two BasePhrases.
         assert_eq!(base_phrases.len(), 2);
         assert_eq!(base_phrases[0].surface, "今日は");
