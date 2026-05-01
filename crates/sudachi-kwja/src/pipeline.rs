@@ -60,9 +60,15 @@ pub struct BucketingConfig {
 
 impl Default for BucketingConfig {
     fn default() -> Self {
+        // Threshold raised from 8 → 50 after the 2026-05-01 perf sweep
+        // showed the 4-bucket variant LOSES to 1-bucket below ~50 chunks
+        // (spr=15 measured 240 sps with 4 buckets vs 404 sps with 1).
+        // Padding savings from bucketing don't pay back launch overhead
+        // until the bucket has >~12 sentences each (~50 chunks / 4 buckets).
+        // See ~/notes/projects/jisho/2026-05-01-kwja-perf-sweep-results.md.
         Self {
             num_buckets: None,
-            min_chunks_for_bucketing: 8,
+            min_chunks_for_bucketing: 50,
         }
     }
 }

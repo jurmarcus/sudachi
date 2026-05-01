@@ -9,8 +9,8 @@ fn default_uses_heuristic() {
     let cfg = BucketingConfig::default();
     assert_eq!(cfg.num_buckets, None, "default = heuristic, not forced");
     assert_eq!(
-        cfg.min_chunks_for_bucketing, 8,
-        "matches existing n>=8 check"
+        cfg.min_chunks_for_bucketing, 50,
+        "perf sweep showed bucketing loses < 50 chunks"
     );
 }
 
@@ -49,16 +49,18 @@ fn default_with_few_chunks_uses_one_bucket() {
     assert_eq!(
         sudachi_kwja::pipeline::compute_bucket_count(5, cfg),
         1,
-        "n=5 < 8 threshold → 1 bucket"
+        "n=5 < 50 threshold → 1 bucket"
     );
-    assert_eq!(sudachi_kwja::pipeline::compute_bucket_count(7, cfg), 1);
+    assert_eq!(sudachi_kwja::pipeline::compute_bucket_count(15, cfg), 1);
+    assert_eq!(sudachi_kwja::pipeline::compute_bucket_count(49, cfg), 1);
 }
 
 #[test]
 fn default_with_enough_chunks_uses_four_buckets() {
     let cfg = BucketingConfig::default();
-    assert_eq!(sudachi_kwja::pipeline::compute_bucket_count(8, cfg), 4);
+    assert_eq!(sudachi_kwja::pipeline::compute_bucket_count(50, cfg), 4);
     assert_eq!(sudachi_kwja::pipeline::compute_bucket_count(100, cfg), 4);
+    assert_eq!(sudachi_kwja::pipeline::compute_bucket_count(200, cfg), 4);
 }
 
 #[test]
