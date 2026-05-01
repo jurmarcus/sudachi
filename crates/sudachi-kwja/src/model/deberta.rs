@@ -76,14 +76,16 @@ impl DebertaBackbone {
     /// correction sentinels `<k>/<d>/<_>/<dummy>` etc.) so the actual
     /// vocab is larger than the base tokenizer's vocab.
     pub fn from_checkpoint(cp: &Checkpoint) -> Result<Self> {
-        // Default dtype: F32. KWJA-Python casts both modules to F16 on CUDA
-        // (see jisho-parse-py's kwja_patches.py: `cast char/word module to
-        // fp16`), but candle-transformers' DeBERTa-v2 has internal F32
-        // scalar additions that mismatch when the model dtype is F16,
-        // producing a runtime "dtype mismatch in add" panic. Until
-        // candle-transformers is patched, stick with F32. To experiment,
-        // call `from_checkpoint_with_dtype(cp, DType::F16)` directly.
-        Self::from_checkpoint_with_dtype(cp, DType::F32)
+        // Default dtype: F16 on CUDA (matches KWJA-Python's inference path
+        // and gives ~2× faster GEMMs on Ampere+ via cuBLAS HMMA), F32
+        // elsewhere (CPU/Metal — F16 GEMMs there have less mature kernels).
+        // Requires the patched candle-transformers in vendor/candle that
+        // casts internal scalar literals to query_layer.dtype().
+        let dtype = match cp.device() {
+            candle_core::Device::Cuda(_) => DType::F16,
+            _ => DType::F32,
+        };
+        Self::from_checkpoint_with_dtype(cp, dtype)
     }
 
     pub fn from_checkpoint_with_dtype(cp: &Checkpoint, dtype: DType) -> Result<Self> {
