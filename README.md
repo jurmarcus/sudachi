@@ -1,8 +1,8 @@
 # sudachi
 
-**A Rust ecosystem for Japanese morphological analysis — search-engine tokenizers, conjugation, and deconjugation.**
+**A Rust ecosystem for Japanese morphological analysis — search-engine tokenizers, conjugation, deconjugation, and KWJA-style structural parsing.**
 
-Six crates that share one tokenizer core, one optimisation pipeline, and one bidirectional morphology library. Targets SQLite FTS5, Tantivy, ParadeDB (PostgreSQL), and WebAssembly.
+Seven crates that share one tokenizer core, one optimisation pipeline, one bidirectional morphology library, and a pure-Rust port of [KWJA](https://github.com/ku-nlp/kwja) (Kyoto-Waseda Japanese Analyzer) inference. Targets SQLite FTS5, Tantivy, ParadeDB (PostgreSQL), WebAssembly, and gRPC inference services on CUDA / Metal / CPU.
 
 ---
 
@@ -10,6 +10,7 @@ Six crates that share one tokenizer core, one optimisation pipeline, and one bid
 
 ```
 crates/
+├── sudachi-kwja/         # Pure-Rust KWJA v2.4 inference (DeBERTa-v2 base, candle backend)
 ├── sudachi-morphology/   # Bidirectional: forward conjugation + backward deconjugation
 ├── sudachi-optimizer/    # Token-stream rewriter; the single Sudachi gateway
 ├── sudachi-search/       # B+C multi-granularity tokenizer (engine-agnostic)
@@ -21,7 +22,7 @@ docker/
 └── postgres/             # Docker image building ParadeDB + pg_search with the Sudachi tokenizer
 ```
 
-All six are workspace members. `sudachi-wasm` is also driven by `wasm-pack`. `docker/postgres/` is build infra; the pgrx Rust source it consumes lives in `~/CODE/paradedb` (see [Postgres integration](#postgres-via-paradedb)).
+All seven are workspace members. `sudachi-wasm` is also driven by `wasm-pack`. `sudachi-kwja` has a `cuda` feature for production GPU inference and a `metal` default for Apple Silicon dev. `docker/postgres/` is build infra; the pgrx Rust source it consumes lives in `~/CODE/paradedb` (see [Postgres integration](#postgres-via-paradedb)).
 
 ---
 
@@ -57,6 +58,10 @@ Sudachi's UniDic output is dictionary-correct but ships known weaknesses on comp
 
 ## How the crates compose
 
+The workspace hosts **two complementary stacks** that share no crate-level dependencies. They live together because of shared authorship, the Japanese-NLP problem domain, and a shared deployment story (jisho consumes both):
+
+### Search / FTS stack
+
 ```
                     ┌─────────────────────────────┐
                     │   sudachi-morphology        │   forward Verb::*() / Form::*
@@ -90,9 +95,63 @@ Sudachi's UniDic output is dictionary-correct but ships known weaknesses on comp
 
 **Key invariant:** every crate that needs `JapaneseDictionary`, `Mode`, `StatelessTokenizer`, `Tokenize`, or `SudachiError` imports them from `sudachi_optimizer::sudachi::*` — never from upstream `sudachi` directly. This gives one place to swap revs, apply optimisation rules, or change tokenizer behaviour for the whole ecosystem.
 
+### Structural NLP stack
+
+```
+                  ┌──────────────────────────────────────────────┐
+                  │   sudachi-kwja                               │
+                  │   - DeBERTa-v2 base (KWJA v2.4) backbone     │
+                  │   - 12 word-module heads + char + typo       │
+                  │   - candle 0.8 (metal | cuda | cpu)          │
+                  │   - fp16 on CUDA via vendored patches        │
+                  └──────────────────┬───────────────────────────┘
+                                     │ relative-path dep
+                                     ▼
+                          ┌──────────────────────────┐
+                          │   jisho-monorepo         │
+                          │   services/jisho-parse   │  gRPC service on 4090
+                          │   (separate sl repo)     │
+                          └──────────────────────────┘
+```
+
+`sudachi-kwja` accepts pre-tokenized morphemes (`SudachiMorpheme`) and produces a structural `Document → Sentence → Phrase → BasePhrase → Morpheme` tree plus cross-sentence discourse relations. The Sudachi tokenization happens in the consumer (`jisho-parse` calls `jisho-core`'s Sudachi pipeline before invoking sudachi-kwja). The two stacks meet in the consumer, never in this workspace's dep graph.
+
 ---
 
 ## Crates
+
+### `sudachi-kwja` — KWJA v2.4 inference port
+
+Pure-Rust port of [KWJA](https://github.com/ku-nlp/kwja) — Kyoto-Waseda's multi-task Japanese analyzer. DeBERTa-v2 **base** backbone, candle 0.8 runtime, argmax-identical with KWJA-Python on the heads we consume.
+
+```rust
+use sudachi_kwja::{Pipeline, SudachiMorpheme};
+
+let pipeline = Pipeline::load("/checkpoints".as_ref())?;
+let docs = pipeline.parse_morphemes(&[vec![
+    SudachiMorpheme { surface: "今日".into(), reading: "きょう".into(), /* ... */ },
+    // ...
+]])?;
+
+for item in docs {
+    let sudachi_kwja::ParseItem::Tree(doc) = item else { continue };
+    for sent in &doc.sentences {
+        for bp in &sent.base_phrases {
+            println!("BP {}: {} → head {} ({})", bp.id, bp.surface, bp.head, bp.dep_type);
+        }
+    }
+}
+```
+
+| Module | Backbone (KWJA v2.4) | Status |
+| ------ | -------------------- | ------ |
+| char (sentence segmentation) | `deberta-v2-base-japanese-char-wwm` | shipped |
+| word (12 heads: dependency / BasePhrase / cohesion / discourse / NE / features / ...) | `deberta-v2-base-japanese` | shipped |
+| typo (kdr + ins) | `deberta-v2-base-japanese-char-wwm` | shipped (opt-in) |
+
+Hot path is `parse_morphemes` — caller has already tokenized with Sudachi, KWJA's word module runs on the pre-tokenized stream and emits the structural heads. Sudachi data wins for `surface` / `reading` / `lemma` / `conjtype` / `conjform`; KWJA wins for dependency, BP tree, cohesion, discourse, NE, and per-word feature flags.
+
+See [crates/sudachi-kwja/README.md](crates/sudachi-kwja/README.md) for the full architecture, head taxonomy, fp16 patches, and checkpoint conversion workflow.
 
 ### `sudachi-search` — B+C tokenizer core
 
@@ -337,6 +396,7 @@ Surface form is available on every tokenizer when raw text is needed.
 
 | Crate                | Type                  | Workspace? | Output                              |
 | -------------------- | --------------------- | ---------- | ----------------------------------- |
+| `sudachi-kwja`       | rlib                  | yes        | KWJA v2.4 inference (DeBERTa-v2 base, candle) |
 | `sudachi-morphology` | rlib                  | yes        | Forward + backward morphology       |
 | `sudachi-optimizer`  | rlib                  | yes        | Optimised token streams + Sudachi gateway |
 | `sudachi-search`     | rlib                  | yes        | B+C SearchToken stream              |
@@ -345,7 +405,7 @@ Surface form is available on every tokenizer when raw text is needed.
 | `sudachi-wasm`       | cdylib + rlib         | yes (also wasm-pack) | `pkg/sudachi_wasm.{wasm,js}` |
 | `docker/postgres/`   | Docker only           | n/a        | `paradedb-sudachi` image            |
 
-Edition 2024 throughout. Rust 1.85+. Workspace `panic` policy is the default (unwind) — sudachi-sqlite's FFI panic boundary depends on it.
+Edition 2024 throughout. Rust 1.85+. Workspace `panic` policy is the default (unwind) — sudachi-sqlite's FFI panic boundary depends on it. `sudachi-kwja` requires checkpoints at runtime (~1 GB total at `~/.local/share/jisho/checkpoints/`); see [crates/sudachi-kwja/README.md](crates/sudachi-kwja/README.md) for setup.
 
 ---
 
@@ -353,4 +413,5 @@ Edition 2024 throughout. Rust 1.85+. Workspace `panic` policy is the default (un
 
 Apache-2.0 for the search/sqlite/tantivy/wasm/optimizer adapters.
 MIT for `sudachi-morphology`.
+MIT OR Apache-2.0 for `sudachi-kwja` (matches KWJA upstream). Model weights remain under their original KWJA / HuggingFace license terms.
 See per-crate `Cargo.toml` for authoritative licenses.

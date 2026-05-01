@@ -1,11 +1,17 @@
 # sudachi monorepo
 
-Six-crate Rust workspace for Japanese morphological analysis: a tokenizer core (`sudachi-search`), three search-engine adapters (`sudachi-sqlite`, `sudachi-tantivy`, `sudachi-wasm`), a token-stream optimiser that doubles as the upstream-Sudachi gateway (`sudachi-optimizer`), and a standalone bidirectional morphology library (`sudachi-morphology`).
+Seven-crate Rust workspace for Japanese morphological analysis and structural NLP:
+- a tokenizer core (`sudachi-search`)
+- three search-engine adapters (`sudachi-sqlite`, `sudachi-tantivy`, `sudachi-wasm`)
+- a token-stream optimiser that doubles as the upstream-Sudachi gateway (`sudachi-optimizer`)
+- a standalone bidirectional morphology library (`sudachi-morphology`)
+- a pure-Rust port of [KWJA](https://github.com/ku-nlp/kwja) v2.4 inference for dependency / BasePhrase / cohesion / discourse / NE on a DeBERTa-v2 base backbone (`sudachi-kwja`)
 
 ## Workspace structure
 
 ```
 crates/
+├── sudachi-kwja/         KWJA v2.4 inference port. DeBERTa-v2 base. candle 0.8 (metal default, cuda for prod).
 ├── sudachi-morphology/   Standalone. Forward verb/adj conjugation + backward deconjugation.
 ├── sudachi-optimizer/    The single Sudachi gateway. Re-exports upstream types + 5-phase rewriter.
 ├── sudachi-search/       B+C multi-granularity tokenizer. Engine-agnostic SearchToken stream.
@@ -17,7 +23,30 @@ docker/
 └── postgres/             Docker infra for ParadeDB + pg_search (Sudachi feature). No Rust source here.
 ```
 
-All six are workspace members. `sudachi-wasm` is additionally driven by `wasm-pack`. `docker/postgres/` is a separate build target; the pgrx Rust source it consumes lives in `~/CODE/paradedb`.
+All seven are workspace members. `sudachi-wasm` is additionally driven by `wasm-pack`. `sudachi-kwja` has mutually-exclusive `metal` (default) and `cuda` features for the candle backend. `docker/postgres/` is a separate build target; the pgrx Rust source it consumes lives in `~/CODE/paradedb`.
+
+## Two product surfaces, one workspace
+
+The crates form **two complementary stacks** that share neither dependencies nor consumers — they coexist here because they share authorship, the Sudachi tokenizer, and the same Japanese-NLP problem domain.
+
+```
+                    Search / FTS stack                          Structural NLP stack
+                    ─────────────────────────                   ───────────────────────────
+                    sudachi-optimizer                           sudachi-kwja
+                          │                                          │
+                          ├── sudachi-search                          (depends on candle, not Sudachi)
+                          │       ├── sudachi-sqlite                  Loaded by jisho-parse (gRPC service)
+                          │       ├── sudachi-tantivy ── paradedb     in the jisho monorepo via relative
+                          │       └── sudachi-wasm                    path: services/jisho-parse/Cargo.toml
+                          │                                          → ../../../sudachi/crates/sudachi-kwja
+                          └── sudachi-morphology
+
+                    Sudachi UniDic tokenizer +                  KWJA dependency / BasePhrase tree /
+                    deconjugation/conjugation +                 cohesion / discourse / NE on a
+                    optimised search token streams              pre-tokenized morpheme stream.
+```
+
+The KWJA crate does not depend on the Sudachi tokenizer crates — it accepts pre-tokenized input via a `SudachiMorpheme` struct mirroring the proto contract that crosses the gRPC boundary in `jisho-parse`. The Sudachi work happens in the consumer; this crate just consumes the morphemes.
 
 ## Dependency invariant: one Sudachi gateway
 
@@ -58,7 +87,16 @@ sudachi-search ◄── sudachi-sqlite
        │       ◄── sudachi-wasm
        │
    external: paradedb/pg_search → sudachi-tantivy (git dep)
+
+
+sudachi-kwja          (independent stack — no Sudachi dep)
+       │              candle 0.8 + safetensors + tokenizers
+       │              consumes pre-tokenized SudachiMorpheme structs
+       ▼
+   external: jisho-monorepo/services/jisho-parse → sudachi-kwja (relative path)
 ```
+
+The KWJA stack is **not** plumbed through `sudachi-optimizer`. It accepts a `Vec<Vec<SudachiMorpheme>>` (mirrored from the proto contract) and emits a `Document` tree. The actual Sudachi tokenization happens in the consumer (`jisho-parse` calls `jisho-core`'s Sudachi pipeline before invoking `sudachi-kwja`).
 
 ## Workspace dependencies (root Cargo.toml)
 
@@ -121,6 +159,9 @@ The dictionary is ~70MB and shared across crates via `Arc<JapaneseDictionary>`.
 - **`sudachi-wasm` is excluded from a normal `cargo build` workspace pass for wasm targets** but is a workspace member so `cargo check`/`clippy` cover it on the host platform. Use `just wasm-build*` for the wasm32 target.
 - **`sudachi-morphology` has no Sudachi dependency.** It's a self-contained morphology library that the optimiser uses; it can also be used standalone for conjugation tables, deconjugation queries, etc.
 - **`sudachi.rs` is pinned** to a specific git rev in the workspace, ensuring all crates see the same dictionary types.
+- **`sudachi-kwja` has no Sudachi dependency either.** It accepts pre-tokenized morphemes (`SudachiMorpheme`) and runs the KWJA word module via candle. The structural heads (dependency, BP tree, cohesion, discourse, NE) augment Sudachi's morpheme-level data; reading/lemma/conjtype/conjform from KWJA are computed but discarded in favor of Sudachi's UniDic values in production.
+- **`sudachi-kwja` requires checkpoints at runtime.** ~1 GB total (char + word safetensors + HF tokenizer artifacts) loaded once per process. Default search location is `~/.local/share/jisho/checkpoints/`; the typo module (~330 MB more) is opt-in.
+- **`sudachi-kwja` is fp16 on CUDA, fp32 elsewhere.** Required vendored patches to `candle-transformers` are documented in `crates/sudachi-kwja/CLAUDE.md`.
 
 ## Algorithm: B+C tokenisation (sudachi-search)
 
@@ -162,6 +203,7 @@ Paradedb's workspace uses `[patch.crates-io]` to redirect `tantivy-tokenizer-api
 
 Every crate has its own `CLAUDE.md` and `AGENTS.md` with deeper detail:
 
+- [crates/sudachi-kwja/CLAUDE.md](crates/sudachi-kwja/CLAUDE.md) — KWJA v2.4 inference port (DeBERTa-v2 base, candle)
 - [crates/sudachi-morphology/CLAUDE.md](crates/sudachi-morphology/CLAUDE.md)
 - [crates/sudachi-optimizer/CLAUDE.md](crates/sudachi-optimizer/CLAUDE.md)
 - [crates/sudachi-search/CLAUDE.md](crates/sudachi-search/CLAUDE.md)
