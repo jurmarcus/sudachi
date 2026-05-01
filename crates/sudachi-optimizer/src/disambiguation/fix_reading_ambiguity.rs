@@ -42,6 +42,11 @@
 //! - 明日 (アス) → アシタ. アス is more formal / written; アシタ is
 //!   conversational. Both valid; アシタ is more common.
 //! - 山道 (サンドウ) → ヤマミチ. Same native-vs-kango pattern as 雪道.
+//! - 時 (トキ) → ジ when preceded by a Numeral. The "o'clock" counter
+//!   reading (5時 = ゴジ) overwhelmingly dominates after a number; UniDic's
+//!   default トキ ("time") only fits in standalone contexts. 29 of 44
+//!   fixable mismatches in the 8.6k-card readings audit were this
+//!   single pattern. Mirror of the 後→アト rule.
 //!
 //! Deferred:
 //! - 角 (カド) → かど/つの/かく — needs 4-way contextual
@@ -127,6 +132,27 @@ pub fn apply(mut morphemes: Vec<Morpheme>, _lexicon: &dyn Lexicon) -> Vec<Morphe
             let nxt_is_numeral = nxt.part_of_speech.iter().any(|p| p == "数詞");
             if nxt_is_numeral {
                 morphemes[i].reading_form = "アト".to_string();
+                changed = true;
+            }
+        }
+
+        // 時 → ジ when preceded by a Numeral (時 as the "o'clock"
+        // counter: 5時 = ゴジ, not ゴトキ). Sudachi's UniDic defaults
+        // to トキ ("time") in many of these contexts, but after a
+        // numeral the o'clock reading dominates by overwhelming
+        // margin in real text. 29 of 44 fixable mismatches in the
+        // 8.6k-card audit were this exact pattern (X時 / X時に).
+        //
+        // Mirror image of the 後→アト rule above (which fires when
+        // *followed* by a numeral, e.g. 後10分 = アト).
+        if surface == "時" && reading == "トキ" && i > 0 {
+            let prev = &morphemes[i - 1];
+            let prev_is_numeral = prev.part_of_speech.iter().any(|p| p == "数詞");
+            if prev_is_numeral {
+                morphemes[i].reading_form = "ジ".to_string();
+                if morphemes[i].dictionary_form_reading == "トキ" {
+                    morphemes[i].dictionary_form_reading = "ジ".to_string();
+                }
                 changed = true;
             }
         }
@@ -422,5 +448,31 @@ mod tests {
         let out = apply(vec![sandou], &EmptyLexicon);
         assert_eq!(out[0].reading_form, "ヤマミチ");
         assert_eq!(out[0].dictionary_form_reading, "ヤマミチ");
+    }
+
+    #[test]
+    fn ji_disambiguates_toki_after_numeral() {
+        // 5時 = ゴジ, not ゴトキ. Numeral predecessor triggers
+        // o'clock reading.
+        let mut go = synth("5", "ゴ", "名詞", 0..1);
+        go.part_of_speech = vec!["名詞".into(), "数詞".into()];
+        let mut toki = synth("時", "トキ", "名詞", 1..2);
+        toki.dictionary_form_reading = "トキ".to_string();
+        let out = apply(vec![go, toki], &EmptyLexicon);
+        assert_eq!(out[1].reading_form, "ジ");
+        assert_eq!(out[1].dictionary_form_reading, "ジ");
+        assert!(out[1].applied_rules.contains(&NAME));
+    }
+
+    #[test]
+    fn toki_left_alone_without_numeral() {
+        // Standalone 時 (no numeral predecessor) keeps トキ.
+        // E.g. "その時に" — context is a demonstrative, not a number.
+        let sono = synth("その", "ソノ", "連体詞", 0..2);
+        let mut toki = synth("時", "トキ", "名詞", 2..3);
+        toki.dictionary_form_reading = "トキ".to_string();
+        let out = apply(vec![sono, toki], &EmptyLexicon);
+        assert_eq!(out[1].reading_form, "トキ");
+        assert!(!out[1].applied_rules.contains(&NAME));
     }
 }
