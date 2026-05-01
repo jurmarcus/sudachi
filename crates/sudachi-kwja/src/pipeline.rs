@@ -127,21 +127,32 @@ impl Pipeline {
             return Ok(vec![]);
         }
 
-        // Flatten: split each input element by sentence boundary, collect
-        // (orig_idx, chunk_morphs) tuples. Chunks own their morpheme Vec
-        // since `split_at_sentence_boundaries` returns Vec<Vec<...>>.
+        // ROW-PER-INPUT-ELEMENT batching (Phase D).
+        //
+        // Previously we split each input element at sentence boundaries
+        // (。/！/？) and made each chunk a row, so multi-sentence inputs
+        // produced N rows. That was simpler but lost cross-sentence
+        // attention context — discourse_logits in particular needs the
+        // model to see all sentences together to predict cross-sentence
+        // discourse relations.
+        //
+        // Now: each input element (`sentences[i]`) is ONE row. The
+        // post-forward decoder splits the resulting logits at sentence
+        // boundaries internally to produce per-sentence Sentence objects
+        // AND extracts cross-sentence discourse from the full tensor.
+        //
+        // Single-sentence inputs (the common case) get identical
+        // treatment as before — split_at_sentence_boundaries returns one
+        // chunk, decode_element_from_logits builds one Sentence, no
+        // cross-sentence pairs, no behavior change.
         let mut chunks_owned: Vec<Vec<SudachiMorpheme>> = vec![];
         let mut chunk_origins: Vec<usize> = vec![];
         for (orig_idx, morphs) in sentences.iter().enumerate() {
             if morphs.is_empty() {
                 continue;
             }
-            for chunk in split_at_sentence_boundaries(morphs) {
-                if !chunk.is_empty() {
-                    chunks_owned.push(chunk);
-                    chunk_origins.push(orig_idx);
-                }
-            }
+            chunks_owned.push(morphs.clone());
+            chunk_origins.push(orig_idx);
         }
 
         // Length-bucketed batching:
@@ -186,8 +197,11 @@ impl Pipeline {
             }
         }
 
-        // Decode per chunk in original order, regroup by orig_idx.
-        let mut per_input: Vec<Vec<Sentence>> = vec![vec![]; sentences.len()];
+        // Decode per element (each chunk is one whole input element now).
+        // decode_element_from_logits returns a full Document with multiple
+        // Sentences (split internally at sentence boundaries) plus
+        // discourse_relations populated from cross-sentence pairs.
+        let mut per_element_doc: Vec<Option<Document>> = (0..sentences.len()).map(|_| None).collect();
         for (chunk_idx, logits_opt) in chunk_logits.into_iter().enumerate() {
             let chunk = &chunks_owned[chunk_idx];
             let orig_idx = chunk_origins[chunk_idx];
@@ -195,38 +209,179 @@ impl Pipeline {
                 Some(l) => l,
                 None => continue,
             };
-            match self.decode_sentence_from_logits(logits, chunk) {
-                Ok(sent) => per_input[orig_idx].push(sent),
+            match self.decode_element_from_logits(logits, chunk) {
+                Ok(doc) => per_element_doc[orig_idx] = Some(doc),
                 Err(e) => {
-                    tracing::warn!(?e, "decode_sentence_from_logits failed for chunk");
-                    per_input[orig_idx].push(Sentence {
-                        text: chunk.iter().map(|m| m.surface.as_str()).collect(),
-                        phrases: vec![],
-                        base_phrases: vec![],
-                        morphemes: vec![],
+                    tracing::warn!(?e, "decode_element_from_logits failed for chunk");
+                    per_element_doc[orig_idx] = Some(Document {
+                        sentences: vec![Sentence {
+                            text: chunk.iter().map(|m| m.surface.as_str()).collect(),
+                            phrases: vec![],
+                            base_phrases: vec![],
+                            morphemes: vec![],
+                        }],
+                        discourse_relations: vec![],
                     });
                 }
             }
         }
 
-        // Inputs that had zero chunks (empty morpheme list) get one empty
-        // Sentence, matching the previous parse_morphemes_one behavior.
-        let out: Vec<ParseItem> = per_input.into_iter().enumerate().map(|(i, sents)| {
-            if sents.is_empty() && sentences[i].is_empty() {
-                ParseItem::Tree(Document {
+        // Empty inputs get one empty Sentence; matches previous behavior.
+        let out: Vec<ParseItem> = per_element_doc.into_iter().enumerate().map(|(i, doc_opt)| {
+            match doc_opt {
+                Some(d) => ParseItem::Tree(d),
+                None => ParseItem::Tree(Document {
                     sentences: vec![Sentence {
-                        text: String::new(),
+                        text: if sentences[i].is_empty() {
+                            String::new()
+                        } else {
+                            sentences[i].iter().map(|m| m.surface.as_str()).collect()
+                        },
                         phrases: vec![],
                         base_phrases: vec![],
                         morphemes: vec![],
                     }],
                     discourse_relations: vec![],
-                })
-            } else {
-                ParseItem::Tree(Document { sentences: sents, discourse_relations: vec![] })
+                }),
             }
         }).collect();
         Ok(out)
+    }
+
+    /// Decode a full input element (possibly multi-sentence) from one
+    /// shared forward pass. Splits the morphemes at sentence boundaries
+    /// (。/！/？), slices the per-sentence portions of `word_logits`, and
+    /// runs the existing single-sentence decoder on each. Then iterates
+    /// predicate base_phrases ACROSS the resulting sentences, looking up
+    /// `discourse_logits[head_word_i, head_word_j]` for cross-sentence
+    /// pairs.
+    fn decode_element_from_logits(
+        &self,
+        word_logits: WordLogits,
+        full_morphs: &[SudachiMorpheme],
+    ) -> Result<Document> {
+        // 1. Sentence segmentation. Track each chunk's word range in the
+        //    full element so we can slice WordLogits per chunk.
+        let chunks = split_at_sentence_boundaries(full_morphs);
+        if chunks.is_empty() {
+            return Ok(Document {
+                sentences: vec![Sentence {
+                    text: full_morphs.iter().map(|m| m.surface.as_str()).collect(),
+                    phrases: vec![],
+                    base_phrases: vec![],
+                    morphemes: vec![],
+                }],
+                discourse_relations: vec![],
+            });
+        }
+
+        let mut chunk_word_starts: Vec<usize> = Vec::with_capacity(chunks.len());
+        let mut acc = 0usize;
+        for chunk in &chunks {
+            chunk_word_starts.push(acc);
+            acc += chunk.len();
+        }
+
+        // 2. Per-chunk decode using sliced logits. slice_word_axis is
+        //    cheap — Tensor::narrow returns a view, no data copy.
+        let mut sentences: Vec<Sentence> = Vec::with_capacity(chunks.len());
+        for (i, chunk) in chunks.iter().enumerate() {
+            let start = chunk_word_starts[i];
+            let end = start + chunk.len();
+            let sliced = word_logits.slice_word_axis(start, end)?;
+            let sent = self.decode_sentence_from_logits(sliced, chunk)?;
+            sentences.push(sent);
+        }
+
+        // 3. Cross-sentence discourse decode. KWJA's discourse_logits are
+        //    per (source_word, target_word, relation). We walk predicate
+        //    BPs across DIFFERENT sentences only — discourse is by
+        //    construction inter-clause/inter-sentence. Argmax over 7
+        //    relations; emit if non-談話関係なし and above threshold.
+        let mut discourse_relations: Vec<crate::document::DiscourseRelation> = vec![];
+        let labels = &*crate::constants::LABELS;
+        if !labels.discourse_relations.is_empty() && chunks.len() >= 2 {
+            const DISCOURSE_THRESHOLD: f32 = 0.5;
+            let null_idx = labels
+                .discourse_relations
+                .iter()
+                .position(|s| s == "談話関係なし")
+                .unwrap_or(0);
+            // Softmax over the relation axis (axis 3) for thresholding.
+            let dis_softmax = candle_nn::ops::softmax(&word_logits.discourse_logits, 3)
+                .map_err(Error::from)?;
+            let dis_t = dis_softmax
+                .squeeze(0)
+                .map_err(Error::from)?
+                .to_dtype(candle_core::DType::F32)
+                .map_err(Error::from)?
+                .to_vec3::<f32>()
+                .map_err(Error::from)?; // (W, W*R) flattened? Actually this gives Vec<Vec<Vec<f32>>>
+            // dis_t shape after squeeze + to_vec3 is (W, W, R).
+
+            // Build (sentence_idx, bp_idx, head_word_idx_in_full_element)
+            // tuples for predicate BPs.
+            let mut predicates: Vec<(usize, usize, usize)> = vec![];
+            for (si, sent) in sentences.iter().enumerate() {
+                let sent_word_offset = chunk_word_starts[si];
+                let mut bp_word_offset = 0usize;
+                for (bi, bp) in sent.base_phrases.iter().enumerate() {
+                    let is_predicate = bp.features.iter().any(|kv| kv.key == "用言");
+                    if is_predicate {
+                        // Head word index within this BP — find first
+                        // non-function-pos morpheme.
+                        let head_in_bp = bp
+                            .morphemes
+                            .iter()
+                            .position(|m| !is_function_pos(&m.pos))
+                            .unwrap_or(0);
+                        predicates.push((
+                            si,
+                            bi,
+                            sent_word_offset + bp_word_offset + head_in_bp,
+                        ));
+                    }
+                    bp_word_offset += bp.morphemes.len();
+                }
+            }
+
+            for &(si, bi, wi) in &predicates {
+                for &(sj, bj, wj) in &predicates {
+                    if si == sj {
+                        continue;
+                    }
+                    let row = match dis_t.get(wi) {
+                        Some(r) => r,
+                        None => continue,
+                    };
+                    let probs = match row.get(wj) {
+                        Some(p) => p,
+                        None => continue,
+                    };
+                    let mut argmax = 0usize;
+                    let mut best_p = f32::NEG_INFINITY;
+                    for (k, &p) in probs.iter().enumerate() {
+                        if p > best_p {
+                            best_p = p;
+                            argmax = k;
+                        }
+                    }
+                    if argmax == null_idx || best_p < DISCOURSE_THRESHOLD {
+                        continue;
+                    }
+                    let rel_type = labels.discourse_relations[argmax].clone();
+                    discourse_relations.push(crate::document::DiscourseRelation {
+                        from_sentence: si as u32,
+                        to_sentence: sj as u32,
+                        from_base_phrase: bi as u32,
+                        to_base_phrase: bj as u32,
+                        r#type: rel_type,
+                    });
+                }
+            }
+        }
+
+        Ok(Document { sentences, discourse_relations })
     }
 
     fn parse_sentence_from_sudachi(&self, sudachi: &[SudachiMorpheme]) -> Result<Sentence> {

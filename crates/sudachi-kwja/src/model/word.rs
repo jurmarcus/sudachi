@@ -92,8 +92,11 @@ pub struct WordLogits {
     /// source word, per relation type) gives the predicted target word.
     pub cohesion_logits: Tensor,
     /// (1, T_words, T_words, num_discourse_relations) — pairwise discourse
-    /// scores. KWJA semantics is cross-sentence only; meaningless within a
-    /// single decoded sentence chunk.
+    /// scores across the WHOLE encoded element (multi-sentence input).
+    /// Cross-sentence discourse decoding (Phase D follow-up) iterates
+    /// predicate BPs across decoded Sentences and looks up
+    /// discourse_logits[head_word_i, head_word_j] for cross-sentence
+    /// pairs.
     pub discourse_logits: Tensor,
     /// Encoded subword info (offsets, word_ids) for callers that need to
     /// map argmax positions back to text.
@@ -315,7 +318,59 @@ impl WordModel {
         }
         Ok(out)
     }
+}
 
+impl WordLogits {
+    /// Slice the word axis to `[start..end]`. Used by
+    /// `decode_element_from_logits` to decode each per-sentence chunk
+    /// from a single multi-sentence forward.
+    ///
+    /// Tensors split:
+    ///   - pos / subpos / conjtype / conjform / ne / dep_type /
+    ///     word_feature / bp_feature  (1, W, ...): narrow dim 1
+    ///   - dependency_scores / cohesion_logits  (1, W, W, R): narrow dim 1 + 2
+    ///   - discourse_logits: kept WHOLE — discourse is intentionally
+    ///     cross-sentence; the decoder reads from the full tensor at
+    ///     document level.
+    ///   - reading_logits / encoded: kept whole; subword-aligned, not
+    ///     trivially per-word sliceable. Reading is passed through from
+    ///     Sudachi anyway.
+    pub fn slice_word_axis(&self, start: usize, end: usize) -> Result<Self> {
+        let nw = end - start;
+        let dt = self.pos_logits.dtype();
+        let _ = dt;
+
+        let p1 = |t: &Tensor| -> Result<Tensor> {
+            t.narrow(1, start, nw).map_err(Error::from)
+        };
+        let p2 = |t: &Tensor| -> Result<Tensor> {
+            // (1, W, W, _): narrow both word axes 1 and 2.
+            let a = t.narrow(1, start, nw).map_err(Error::from)?;
+            a.narrow(2, start, nw).map_err(Error::from)
+        };
+        Ok(WordLogits {
+            // Reading is kept as-is; we don't decode it per-sentence.
+            reading_logits: self.reading_logits.clone(),
+            pos_logits: p1(&self.pos_logits)?,
+            subpos_logits: p1(&self.subpos_logits)?,
+            conjtype_logits: p1(&self.conjtype_logits)?,
+            conjform_logits: p1(&self.conjform_logits)?,
+            ne_logits: p1(&self.ne_logits)?,
+            dependency_scores: p2(&self.dependency_scores)?,
+            dependency_type_logits: p1(&self.dependency_type_logits)?,
+            word_feature_probs: p1(&self.word_feature_probs)?,
+            bp_feature_probs: p1(&self.bp_feature_probs)?,
+            cohesion_logits: p2(&self.cohesion_logits)?,
+            // Discourse stays whole — cross-sentence decoding reads
+            // from this at document level.
+            discourse_logits: self.discourse_logits.clone(),
+            encoded: self.encoded.clone(),
+            num_words: nw,
+        })
+    }
+}
+
+impl WordModel {
     /// Raw-text path: HF tokenizer assigns word_ids automatically (one
     /// word per HF "word group"). For Japanese this often degenerates
     /// (everything → word 0). Prefer `forward_pretokenized` with Sudachi
