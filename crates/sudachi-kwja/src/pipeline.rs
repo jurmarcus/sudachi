@@ -775,19 +775,37 @@ impl Pipeline {
                     if !valid_source {
                         continue;
                     }
-                    // Target-feature gate. PAS / bridging / coref all want
-                    // a nominal target. Walk targets in argmax order and
-                    // pick the highest-scoring nominal BP head.
+                    // Target-feature + directionality gate (mask v3).
+                    //
+                    // KWJA's training data restricts antecedent candidates
+                    // by relation type:
+                    //   PAS (ガ ヲ ニ ガ２ デ ト 時間): target must be 体言;
+                    //     direction is unconstrained (predicate args can be
+                    //     before or after the predicate in Japanese).
+                    //   Bridging (ノ): target must be 体言 AND must precede
+                    //     the source — bridging is anaphoric.
+                    //   Coreference (=): target must be 体言 AND must
+                    //     precede the source — coref is anaphoric.
+                    //
+                    // The directionality filter alone cuts spurious
+                    // forward-looking relations (我々 referring to a noun
+                    // that appears later in the sentence) which are
+                    // grammatically impossible in this language.
+                    let is_anaphoric =
+                        BRIDGING_RELS.contains(&rel_type.as_str())
+                            || COREF_RELS.contains(&rel_type.as_str());
                     let mut best_target = 0usize;
                     let mut best_prob = f32::NEG_INFINITY;
                     for tgt in 0..num_w {
+                        // Anaphoric relations point only backward.
+                        if is_anaphoric && tgt >= src_word {
+                            continue;
+                        }
                         let tgt_bp_idx = match word_to_bp.get(tgt).copied() {
                             Some(b) if b < base_phrases.len() => b,
                             _ => continue,
                         };
-                        // Only consider BP-head positions (matches KWJA's
-                        // antecedent-candidate set; non-head morphemes
-                        // are noise).
+                        // BP-head positions only (KWJA's antecedent set).
                         if bp_head_word.get(tgt_bp_idx).copied() != Some(tgt) {
                             continue;
                         }
