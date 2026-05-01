@@ -585,13 +585,26 @@ impl Pipeline {
                 bp.features.iter().any(|kv| kv.key == key)
             };
 
+            // Pre-compute per-BP source-flags so we can also use them to
+            // gate the TARGET. KWJA's full mask restricts both sides:
+            //   PAS source must be 用言, target must be 体言
+            //   Bridging (ノ) source must be 体言, target must be 体言
+            //   Coreference (=) both source and target must be 体言
+            let bp_is_predicate: Vec<bool> = base_phrases
+                .iter()
+                .map(|bp| bp_has_feature(bp, "用言"))
+                .collect();
+            let bp_is_nominal: Vec<bool> = base_phrases
+                .iter()
+                .map(|bp| bp_has_feature(bp, "体言"))
+                .collect();
+
             for (src_bp_idx, &src_word) in bp_head_word.iter().enumerate() {
                 if src_word >= num_w {
                     continue;
                 }
-                let src_bp = &base_phrases[src_bp_idx];
-                let src_is_predicate = bp_has_feature(src_bp, "用言");
-                let src_is_nominal = bp_has_feature(src_bp, "体言");
+                let src_is_predicate = bp_is_predicate[src_bp_idx];
+                let src_is_nominal = bp_is_nominal[src_bp_idx];
                 for r in 0..num_r {
                     let rel_type = &labels.cohesion_relations[r];
                     // Source-feature gate.
@@ -607,9 +620,26 @@ impl Pipeline {
                     if !valid_source {
                         continue;
                     }
+                    // Target-feature gate. PAS / bridging / coref all want
+                    // a nominal target. Walk targets in argmax order and
+                    // pick the highest-scoring nominal BP head.
                     let mut best_target = 0usize;
                     let mut best_prob = f32::NEG_INFINITY;
                     for tgt in 0..num_w {
+                        let tgt_bp_idx = match word_to_bp.get(tgt).copied() {
+                            Some(b) if b < base_phrases.len() => b,
+                            _ => continue,
+                        };
+                        // Only consider BP-head positions (matches KWJA's
+                        // antecedent-candidate set; non-head morphemes
+                        // are noise).
+                        if bp_head_word.get(tgt_bp_idx).copied() != Some(tgt) {
+                            continue;
+                        }
+                        // Target must be nominal for all 9 relation types.
+                        if !bp_is_nominal[tgt_bp_idx] {
+                            continue;
+                        }
                         let p = coh_t[src_word][tgt][r];
                         if p > best_prob {
                             best_prob = p;
