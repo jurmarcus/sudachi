@@ -26,7 +26,7 @@ impl CharModel {
     pub fn load(checkpoint: &Checkpoint, vocab_path: &Path) -> Result<Self> {
         let tokenizer = CharTokenizer::load(vocab_path)?;
         let backbone = DebertaBackbone::from_checkpoint(checkpoint)?;
-        let vb = checkpoint_var_builder(checkpoint)?;
+        let vb = checkpoint_var_builder(checkpoint, backbone.dtype())?;
         let sent_segmentation = SequentialMlpHead::from_var_builder(
             vb.pp("sent_segmentation_tagger"),
             crate::constants::HIDDEN_SIZE,
@@ -39,12 +39,12 @@ impl CharModel {
     /// equivalence tests.
     pub fn logits(&self, text: &str) -> Result<Tensor> {
         let enc = self.tokenizer.encode(text)?;
-        let device = Device::Cpu;
+        let device = self.backbone.device().clone();
         let input_ids = Tensor::new(vec![enc.input_ids.clone()], &device).map_err(Error::from)?;
         let attention_mask =
             Tensor::new(vec![enc.attention_mask.clone()], &device).map_err(Error::from)?;
         let attention_mask_f32 = attention_mask
-            .to_dtype(DType::F32)
+            .to_dtype(self.backbone.dtype())
             .map_err(Error::from)?;
         let hidden = self.backbone.forward(&input_ids, &attention_mask_f32, None)?;
         self.sent_segmentation.forward(&hidden)

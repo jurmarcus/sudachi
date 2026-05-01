@@ -258,7 +258,12 @@ impl Pipeline {
         // Shape (1, num_words, num_word_features) → per-morpheme Vec<String>.
         const WORD_FEATURE_THRESHOLD: f32 = 0.5;
         let word_features_per_morph: Vec<Vec<String>> = if word_logits.num_words > 0 {
-            let probs_t = word_logits.word_feature_probs.to_vec3::<f32>().map_err(Error::from)?;
+            let probs_t = word_logits
+                .word_feature_probs
+                .to_dtype(candle_core::DType::F32)
+                .map_err(Error::from)?
+                .to_vec3::<f32>()
+                .map_err(Error::from)?;
             let row = &probs_t[0]; // (num_words, num_features)
             row.iter()
                 .map(|w| {
@@ -351,7 +356,12 @@ impl Pipeline {
         // morpheme via reconstruct_phrases.
         const BP_FEATURE_THRESHOLD: f32 = 0.5;
         let bp_features_per_word: Vec<Vec<crate::document::KeyValue>> = if word_logits.num_words > 0 {
-            let probs_t = word_logits.bp_feature_probs.to_vec3::<f32>().map_err(Error::from)?;
+            let probs_t = word_logits
+                .bp_feature_probs
+                .to_dtype(candle_core::DType::F32)
+                .map_err(Error::from)?
+                .to_vec3::<f32>()
+                .map_err(Error::from)?;
             let row = &probs_t[0];
             row.iter()
                 .map(|w| {
@@ -496,6 +506,8 @@ impl Pipeline {
             .map_err(Error::from)?;
             let coh_t = coh_softmax
                 .squeeze(0)
+                .map_err(Error::from)?
+                .to_dtype(candle_core::DType::F32)
                 .map_err(Error::from)?
                 .to_vec3::<f32>()
                 .map_err(Error::from)?; // (W, W, R)

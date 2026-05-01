@@ -41,7 +41,17 @@ pub fn pool_subwords(
         )));
     }
     let device = hidden.device().clone();
-    let hidden_vec: Vec<Vec<Vec<f32>>> = hidden
+    // pool_subwords does its arithmetic in f32 (even for fp16 backbones)
+    // because the candle to_vec3 path is dtype-specific and the averaging
+    // benefits from f32 precision. Result is cast back to the source dtype
+    // at the end to avoid up-casting downstream tensors.
+    let original_dtype = hidden.dtype();
+    let hidden_f32 = if original_dtype == candle_core::DType::F32 {
+        hidden.clone()
+    } else {
+        hidden.to_dtype(candle_core::DType::F32).map_err(Error::from)?
+    };
+    let hidden_vec: Vec<Vec<Vec<f32>>> = hidden_f32
         .to_vec3::<f32>()
         .map_err(Error::from)?;
 
@@ -78,7 +88,12 @@ pub fn pool_subwords(
         out.push(Tensor::from_vec(means, (num_words, h), &device).map_err(Error::from)?);
     }
 
-    Tensor::stack(&out, 0).map_err(Error::from)
+    let stacked = Tensor::stack(&out, 0).map_err(Error::from)?;
+    if original_dtype == candle_core::DType::F32 {
+        Ok(stacked)
+    } else {
+        stacked.to_dtype(original_dtype).map_err(Error::from)
+    }
 }
 
 /// Convenience: build word_ids from an iterator of `Option<u32>`. Returns an

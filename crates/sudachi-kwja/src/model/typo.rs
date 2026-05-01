@@ -53,7 +53,7 @@ impl TypoModel {
     ) -> Result<Self> {
         let tokenizer = TypoTokenizer::load(vocab_path)?;
         let encoder = DebertaBackbone::from_checkpoint(checkpoint)?;
-        let vb = checkpoint_var_builder(checkpoint)?;
+        let vb = checkpoint_var_builder(checkpoint, encoder.dtype())?;
         let h = crate::constants::HIDDEN_SIZE;
 
         // The kdr_tagger output dim equals the encoder vocab_size; read it
@@ -106,7 +106,7 @@ impl TypoModel {
         let device = self.encoder.device().clone();
         let input_ids = Tensor::new(vec![encoded.input_ids.clone()], &device).map_err(Error::from)?;
         let attn = Tensor::new(vec![encoded.attention_mask.clone()], &device).map_err(Error::from)?;
-        let attn_f32 = attn.to_dtype(DType::F32).map_err(Error::from)?;
+        let attn_f32 = attn.to_dtype(self.encoder.dtype()).map_err(Error::from)?;
         let hidden = self.encoder.forward(&input_ids, &attn_f32, None)?;
         let kdr_logits = self.kdr_tagger.forward(&hidden)?;
         let ins_logits = self.ins_tagger.forward(&hidden)?;
@@ -241,7 +241,13 @@ pub struct CorrectionResult {
 /// logits tensor. Returns `Vec<(argmax_idx, max_prob)>` of length T.
 fn softmax_argmax_with_max(logits: &Tensor) -> Result<Vec<(u32, f32)>> {
     let probs = candle_nn::ops::softmax(logits, 2).map_err(Error::from)?;
-    let v = probs.squeeze(0).map_err(Error::from)?.to_vec2::<f32>().map_err(Error::from)?;
+    let v = probs
+        .squeeze(0)
+        .map_err(Error::from)?
+        .to_dtype(candle_core::DType::F32)
+        .map_err(Error::from)?
+        .to_vec2::<f32>()
+        .map_err(Error::from)?;
     Ok(v
         .into_iter()
         .map(|row| {

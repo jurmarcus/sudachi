@@ -34,6 +34,7 @@ pub struct DebertaBackbone {
     embeddings: DebertaV2Embeddings,
     encoder: DebertaV2Encoder,
     device: candle_core::Device,
+    dtype: DType,
 }
 
 /// Build the candle `Config` matching KWJA's DeBERTa-v2 base. Vocab size
@@ -75,6 +76,17 @@ impl DebertaBackbone {
     /// correction sentinels `<k>/<d>/<_>/<dummy>` etc.) so the actual
     /// vocab is larger than the base tokenizer's vocab.
     pub fn from_checkpoint(cp: &Checkpoint) -> Result<Self> {
+        // Default dtype: F32. KWJA-Python casts both modules to F16 on CUDA
+        // (see jisho-parse-py's kwja_patches.py: `cast char/word module to
+        // fp16`), but candle-transformers' DeBERTa-v2 has internal F32
+        // scalar additions that mismatch when the model dtype is F16,
+        // producing a runtime "dtype mismatch in add" panic. Until
+        // candle-transformers is patched, stick with F32. To experiment,
+        // call `from_checkpoint_with_dtype(cp, DType::F16)` directly.
+        Self::from_checkpoint_with_dtype(cp, DType::F32)
+    }
+
+    pub fn from_checkpoint_with_dtype(cp: &Checkpoint, dtype: DType) -> Result<Self> {
         let vocab_size = cp
             .get("encoder.embeddings.word_embeddings.weight")
             .map_err(|e| Error::Checkpoint(format!("read word_embeddings shape: {e}")))?
@@ -82,18 +94,25 @@ impl DebertaBackbone {
             .map_err(Error::from)?;
 
         let config = kwja_config(vocab_size);
-        let vb = checkpoint_var_builder(cp)?;
+        let vb = checkpoint_var_builder(cp, dtype)?;
         let embeddings = DebertaV2Embeddings::load(vb.pp("encoder.embeddings"), &config)
             .map_err(|e| Error::Checkpoint(format!("embeddings load: {e}")))?;
         let encoder = DebertaV2Encoder::load(vb.pp("encoder.encoder"), &config)
             .map_err(|e| Error::Checkpoint(format!("encoder load: {e}")))?;
-        Ok(Self { embeddings, encoder, device: cp.device().clone() })
+        Ok(Self { embeddings, encoder, device: cp.device().clone(), dtype })
     }
 
     /// Device the model's parameter tensors live on. Inputs must match
     /// this device or candle will panic at the embedding lookup.
     pub fn device(&self) -> &candle_core::Device {
         &self.device
+    }
+
+    /// Dtype of the model's float parameter tensors. Used by callers to
+    /// cast intermediate buffers (e.g. attention_mask) into the matching
+    /// precision before forward.
+    pub fn dtype(&self) -> DType {
+        self.dtype
     }
 
     /// Run input_ids through embeddings + encoder. Returns hidden states of
@@ -292,13 +311,28 @@ fn make_log_bucket(
 }
 
 /// Build a VarBuilder backed by all tensors in the checkpoint. Materializes
-/// every tensor up front (one-time cost at Pipeline construction).
-pub(crate) fn checkpoint_var_builder(cp: &Checkpoint) -> Result<VarBuilder<'static>> {
+/// every tensor up front (one-time cost at Pipeline construction). The
+/// VarBuilder casts loaded tensors to `dtype` — pass F16 to match
+/// KWJA-Python's CUDA inference path (its kwja_patches.py casts both
+/// modules to fp16 on GPU), F32 for portability.
+pub(crate) fn checkpoint_var_builder(cp: &Checkpoint, dtype: DType) -> Result<VarBuilder<'static>> {
     let mut tensors = std::collections::HashMap::new();
     for name in cp.tensor_names() {
-        tensors.insert(name.clone(), cp.get(&name)?);
+        let mut t = cp.get(&name)?;
+        // Pre-cast bool/u8/i32/i64 stays as-is (some buffers in the
+        // checkpoint are masks/indices). Float tensors get the requested
+        // dtype.
+        match t.dtype() {
+            DType::F32 | DType::F16 | DType::BF16 | DType::F64 => {
+                if t.dtype() != dtype {
+                    t = t.to_dtype(dtype).map_err(Error::from)?;
+                }
+            }
+            _ => {}
+        }
+        tensors.insert(name.clone(), t);
     }
-    Ok(VarBuilder::from_tensors(tensors, DType::F32, cp.device()))
+    Ok(VarBuilder::from_tensors(tensors, dtype, cp.device()))
 }
 
 #[cfg(test)]

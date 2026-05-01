@@ -106,7 +106,7 @@ impl WordModel {
     pub fn load(checkpoint: &Checkpoint, tokenizer_path: &Path) -> Result<Self> {
         let tokenizer = DebertaTokenizer::load(tokenizer_path)?;
         let backbone = DebertaBackbone::from_checkpoint(checkpoint)?;
-        let vb = checkpoint_var_builder(checkpoint)?;
+        let vb = checkpoint_var_builder(checkpoint, backbone.dtype())?;
 
         let labels = &*crate::constants::LABELS;
 
@@ -238,13 +238,13 @@ impl WordModel {
         let w_max = num_words_per.iter().copied().max().unwrap_or(0);
         let input_ids = Tensor::from_vec(input_ids_flat, (b, t_max), &device).map_err(Error::from)?;
         let attn = Tensor::from_vec(attn_flat, (b, t_max), &device).map_err(Error::from)?;
-        let attn_f32 = attn.to_dtype(DType::F32).map_err(Error::from)?;
+        let attn_f32 = attn.to_dtype(self.backbone.dtype()).map_err(Error::from)?;
 
         let hidden = self.backbone.forward(&input_ids, &attn_f32, None)?;
         let reading_logits = self.reading_tagger.forward(&hidden)?;
 
         let pooled = if w_max == 0 {
-            Tensor::zeros((b, 0, crate::constants::HIDDEN_SIZE), DType::F32, &device)
+            Tensor::zeros((b, 0, crate::constants::HIDDEN_SIZE), self.backbone.dtype(), &device)
                 .map_err(Error::from)?
         } else {
             pool_subwords(&hidden, &word_ids_padded, w_max)?
@@ -280,7 +280,7 @@ impl WordModel {
         } else {
             Tensor::zeros(
                 (b, 0, crate::constants::LABELS.dependency_types.len()),
-                DType::F32,
+                self.backbone.dtype(),
                 &device,
             )
             .map_err(Error::from)?
@@ -341,7 +341,7 @@ impl WordModel {
         let attention_mask = Tensor::new(vec![encoded.attention_mask.clone()], &device)
             .map_err(Error::from)?;
         let attention_mask_f32 = attention_mask
-            .to_dtype(DType::F32)
+            .to_dtype(self.backbone.dtype())
             .map_err(Error::from)?;
 
         let hidden_subwords = self.backbone.forward(&input_ids, &attention_mask_f32, None)?;
@@ -349,7 +349,7 @@ impl WordModel {
 
         let word_ids_per_batch = vec![encoded.word_ids.clone()];
         let pooled = if num_words == 0 {
-            Tensor::zeros((1, 0, crate::constants::HIDDEN_SIZE), DType::F32, &device)
+            Tensor::zeros((1, 0, crate::constants::HIDDEN_SIZE), self.backbone.dtype(), &device)
                 .map_err(Error::from)?
         } else {
             pool_subwords(&hidden_subwords, &word_ids_per_batch, num_words)?
@@ -379,7 +379,7 @@ impl WordModel {
         } else {
             Tensor::zeros(
                 (1, 0, crate::constants::LABELS.dependency_types.len()),
-                DType::F32,
+                self.backbone.dtype(),
                 &device,
             )
             .map_err(Error::from)?
