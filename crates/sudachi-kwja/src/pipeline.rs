@@ -444,6 +444,7 @@ impl Pipeline {
         })
     }
 
+    #[allow(dead_code)] // Single-row scaffolding from earlier port iterations; superseded by parse_morphemes(_with_config). Kept for the eventual parse_one re-introduction.
     fn parse_sentence_from_sudachi(&self, sudachi: &[SudachiMorpheme]) -> Result<Sentence> {
         // Single-sentence path (kept for `parse_one` which goes via raw text →
         // char split → per-sentence forward). For batched morpheme inputs use
@@ -477,7 +478,7 @@ impl Pipeline {
         // using argmax vs heuristic. Keep the argmax decode disabled
         // until we can either re-tokenize via Juman++ or fine-tune.
         let _ = decode_dependency_parents;
-        let dep_parents: Vec<i32> = if sudachi.is_empty() {
+        let _dep_parents: Vec<i32> = if sudachi.is_empty() {
             vec![]
         } else {
             let last = (sudachi.len() - 1) as i32;
@@ -1218,6 +1219,7 @@ fn argmax_per_word(t: &Tensor) -> Result<Vec<u32>> {
 /// For each KWJA word_id, find its byte-range from the subwords that map
 /// to it. `offsets[i]` is `(start, end)` bytes of subword `i`. Returns
 /// Vec of length `num_words`; entries with no subwords get `(0, 0)`.
+#[allow(dead_code)] // Used by single-row span-mapping path; pre-batched-input scaffolding. Kept for the parse_one re-introduction.
 fn compute_word_spans(
     offsets: &[(usize, usize)],
     word_ids: &[Option<u32>],
@@ -1250,6 +1252,7 @@ fn compute_word_spans(
 /// given Sudachi morpheme span `(m_start, m_end)`. Returns `None` if no
 /// KWJA word overlaps the morpheme at all (rare — would mean a tokenizer
 /// disagreement at the character level).
+#[allow(dead_code)] // Companion to compute_word_spans on the parse_one path; same fate.
 fn best_kwja_word_for_span(
     m_start: usize,
     m_end: usize,
@@ -1425,6 +1428,7 @@ fn collect_word_surface(
     text.get(start..end).unwrap_or("").to_string()
 }
 
+#[allow(dead_code)] // Doc-comment-referenced single-row helper; used by the deferred parse_one path. Same fate as the other unused-on-batch-only helpers above.
 fn sudachi_to_sentence(sudachi: &[SudachiMorpheme]) -> Sentence {
     let text: String = sudachi.iter().map(|m| m.surface.as_str()).collect();
     let morphemes = sudachi
