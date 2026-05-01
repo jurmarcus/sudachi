@@ -67,6 +67,31 @@ impl Default for BucketingConfig {
     }
 }
 
+/// Decide how many length-buckets to use for `n_chunks` items, given the
+/// caller's config. Centralized so tests can assert it without touching
+/// CUDA or model state.
+///
+/// Behavior:
+/// - `cfg.num_buckets = None` → legacy heuristic: 4 if
+///   `n_chunks >= cfg.min_chunks_for_bucketing`, else 1.
+/// - `cfg.num_buckets = Some(n)` → exactly `n`, capped at `n_chunks`
+///   (you can't have more buckets than items).
+/// - Always returns at least 1 (zero buckets is meaningless and would
+///   divide-by-zero in the bucketing loop).
+pub fn compute_bucket_count(n_chunks: usize, cfg: BucketingConfig) -> usize {
+    let raw = match cfg.num_buckets {
+        Some(n) => n.max(1),
+        None => {
+            if n_chunks >= cfg.min_chunks_for_bucketing {
+                4
+            } else {
+                1
+            }
+        }
+    };
+    raw.min(n_chunks.max(1))
+}
+
 impl Pipeline {
     /// Load both modules from a directory, defaulting to CUDA when the
     /// `cuda` feature is enabled and a CUDA device is available, otherwise
@@ -140,6 +165,17 @@ impl Pipeline {
     /// KWJA wins for: dependency parents (when word counts align).
     /// Sudachi POS is mapped to KWJA pos/subpos slots via `sudachi_to_sentence`.
     pub fn parse_morphemes(&self, sentences: &[Vec<SudachiMorpheme>]) -> Result<Vec<ParseItem>> {
+        self.parse_morphemes_with_config(sentences, BucketingConfig::default())
+    }
+
+    /// Like `parse_morphemes` but lets the caller override the internal
+    /// length-bucketing strategy. Production callers should use
+    /// `parse_morphemes`; bench harnesses use this to sweep bucket counts.
+    pub fn parse_morphemes_with_config(
+        &self,
+        sentences: &[Vec<SudachiMorpheme>],
+        cfg: BucketingConfig,
+    ) -> Result<Vec<ParseItem>> {
         if sentences.is_empty() {
             return Ok(vec![]);
         }
@@ -187,9 +223,10 @@ impl Pipeline {
         let mut order: Vec<usize> = (0..n_chunks).collect();
         order.sort_by(|&a, &b| chunks_owned[b].len().cmp(&chunks_owned[a].len()));
 
-        // Bucket count heuristic: 4 buckets when we have ≥8 chunks, else 1
-        // (no benefit from bucketing tiny batches — pure overhead).
-        let num_buckets = if n_chunks >= 8 { 4 } else { 1 };
+        // Bucket count: configurable via `cfg`. Default heuristic is
+        // 4 buckets when we have ≥8 chunks, else 1 (no benefit from
+        // bucketing tiny batches — pure overhead). See `compute_bucket_count`.
+        let num_buckets = compute_bucket_count(n_chunks, cfg);
         let bucket_size = n_chunks.div_ceil(num_buckets);
 
         let mut chunk_logits: Vec<Option<crate::model::word::WordLogits>> =
