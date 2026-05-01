@@ -13,7 +13,7 @@ use crate::error::Error;
 use crate::model::deberta::{DebertaBackbone, checkpoint_var_builder};
 use crate::model::heads::SequentialMlpHead;
 use crate::tokenizer::CharTokenizer;
-use candle_core::{DType, Device, Tensor};
+use candle_core::{DType, Tensor};
 use std::path::Path;
 
 pub struct CharModel {

@@ -39,7 +39,7 @@ use crate::model::heads::{
 };
 use crate::model::pool::pool_subwords;
 use crate::tokenizer::{DebertaTokenizer, Encoded};
-use candle_core::{DType, Device, Tensor};
+use candle_core::Tensor;
 use std::path::Path;
 
 pub struct WordModel {
