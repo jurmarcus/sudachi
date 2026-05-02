@@ -64,6 +64,15 @@ pub fn apply(morphemes: Vec<Morpheme>, _lexicon: &dyn Lexicon) -> Vec<Morpheme> 
             && current.dictionary_form.ends_with('い');
 
         if dict_match || gattari_special {
+            // Snapshot `current.surface` BEFORE the merge so we can
+            // build the new lemma as `prev_surface + suffix_dict_form`.
+            // Without this, when combine_inflections has already chained
+            // additional conjugation onto the suffix (がる + れて + いる
+            // → surface=がられている, dict=がる), promoting `current.surface
+            // .clone()` would set the lemma to the whole conjugated
+            // surface (`可愛がられている`) instead of the lexeme
+            // (`可愛がる`).
+            let prev_surface = current.surface.clone();
             current.surface.push_str(&next.surface);
             current.reading_form.push_str(&next.reading_form);
             current.dictionary_form_reading.push_str(&next.dictionary_form_reading);
@@ -91,8 +100,9 @@ pub fn apply(morphemes: Vec<Morpheme>, _lexicon: &dyn Lexicon) -> Vec<Morpheme> 
                 "さ" | "がる" | "ぶり" | "振り" | "ら"
             );
             if is_promoting_suffix {
-                current.dictionary_form = current.surface.clone();
-                current.normalized_form = current.surface.clone();
+                let new_lemma = format!("{prev_surface}{}", next.dictionary_form);
+                current.dictionary_form = new_lemma.clone();
+                current.normalized_form = new_lemma;
             }
             current.record_rule(NAME);
         } else {
