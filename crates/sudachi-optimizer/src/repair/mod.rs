@@ -6,6 +6,7 @@
 
 pub mod colloquial_negative_nee;
 pub mod colloquial_ran_nai;
+pub mod compound_noun_suffix;
 pub mod fused_interjection_particle;
 pub mod hasa_noun;
 pub mod honorific_lemma;

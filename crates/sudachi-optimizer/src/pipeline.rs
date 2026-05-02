@@ -135,6 +135,7 @@ pub fn canonical_stages() -> Vec<Stage> {
         repair::colloquial_negative_nee::stage(),
         repair::colloquial_ran_nai::stage(),
         repair::honorific_lemma::stage(),
+        repair::compound_noun_suffix::stage(),
         // ── Combine ──────────────────────────────────────────────────
         combine::prefixes::stage(),
         combine::inflections::stage(),
