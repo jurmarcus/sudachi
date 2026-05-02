@@ -99,7 +99,7 @@ dict-setup:
     mkdir -p ~/.sudachi
     if [ ! -f ~/.sudachi/system_full.dic ]; then
         echo "Downloading Sudachi dictionary..."
-        curl -L https://github.com/WorksApplications/SudachiDict/releases/download/v20251022/sudachi-dictionary-20251022-full.zip -o /tmp/sudachi-dict.zip
+        curl -L https://github.com/WorksApplications/SudachiDict/releases/download/v20260428/sudachi-dictionary-20260428-full.zip -o /tmp/sudachi-dict.zip
         unzip -o /tmp/sudachi-dict.zip -d /tmp/sudachi-temp/
         cp /tmp/sudachi-temp/*/system_full.dic ~/.sudachi/
         cp /tmp/sudachi-temp/*/char.def ~/.sudachi/ 2>/dev/null || true

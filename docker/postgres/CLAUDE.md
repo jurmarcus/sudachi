@@ -95,7 +95,7 @@ content::pdb.sudachi('a')         -- Mode A (finest)
 | -------------------- | ----------------------------- | ------------------------------------ |
 | `SUDACHI_DICT_PATH`  | Yes (in the postgres process) | Absolute path to `system_full.dic`   |
 
-The Dockerfile sets `SUDACHI_DICT_PATH=/opt/sudachi/sudachi-dictionary-20251022/system_full.dic` in the runtime image.
+The Dockerfile sets `SUDACHI_DICT_PATH=/opt/sudachi/sudachi-dictionary-20260428/system_full.dic` in the runtime image.
 
 ## Key dependency chain
 

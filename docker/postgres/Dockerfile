@@ -47,7 +47,14 @@ ENV PATH="/usr/local/bin:/root/.cargo/bin:$PATH" \
 
 # Clone jurmarcus/paradedb (includes Sudachi tokenizer integration).
 # Cargo resolves sudachi-tantivy via git dep — no sibling COPY hacks needed.
-RUN git clone --depth 1 https://github.com/jurmarcus/paradedb /workspace
+#
+# PARADEDB_REV controls cache invalidation: bump it (or override via
+# `--build-arg PARADEDB_REV=<sha>`) whenever the fork advances and you want
+# the build to pick up the new HEAD. The shallow clone always pulls main, so
+# the value is purely a buildkit cache key; doesn't need to be a real git ref.
+ARG PARADEDB_REV=2753a5c
+RUN echo "paradedb-rev=${PARADEDB_REV}" && \
+    git clone --depth 1 https://github.com/jurmarcus/paradedb /workspace
 
 # Install the pgrx version of pg_search
 WORKDIR /workspace
@@ -95,7 +102,7 @@ WORKDIR /tmp
 RUN mkdir -p /opt/sudachi && \
   if echo "$PG_SEARCH_FEATURES" | grep -q "sudachi"; then \
     echo "Downloading Sudachi dictionary..." && \
-    curl -L https://github.com/WorksApplications/SudachiDict/releases/download/v20251022/sudachi-dictionary-20251022-full.zip -o /tmp/sudachi-dict.zip && \
+    curl -L https://github.com/WorksApplications/SudachiDict/releases/download/v20260428/sudachi-dictionary-20260428-full.zip -o /tmp/sudachi-dict.zip && \
     python3 -m zipfile -e /tmp/sudachi-dict.zip /opt/sudachi/ && \
     rm /tmp/sudachi-dict.zip && \
     echo "Dictionary installed to /opt/sudachi/"; \
@@ -111,6 +118,10 @@ RUN if [ "$ENABLE_ANTITHESIS_INSTRUMENTATION" = "true" ]; then \
   if echo "$PG_SEARCH_FEATURES" | grep -q "sudachi"; then \
     export SUDACHI_DICT_PATH=$(find /opt/sudachi -name "system_full.dic" | head -1); \
   fi; \
+  # paradedb refactored sudachi out of pg_search into the `tokenizers` crate.
+  # pg_search now defines its own `sudachi` feature that forwards to
+  # `tokenizers/sudachi`, so #[cfg(feature = "sudachi")] gates inside
+  # pg_search activate correctly when we pass `--features sudachi`.
   FEATURE_FLAGS=""; \
   for feat in $(echo "${PG_SEARCH_FEATURES}" | tr ',' ' '); do \
     FEATURE_FLAGS="${FEATURE_FLAGS} --features ${feat}"; \
@@ -198,7 +209,7 @@ ARG ENABLE_ANTITHESIS_INSTRUMENTATION
 # Declare runtime environment variables
 ENV PG_VERSION_MAJOR=${PG_VERSION_MAJOR} \
     ENABLE_ANTITHESIS_INSTRUMENTATION=${ENABLE_ANTITHESIS_INSTRUMENTATION} \
-    SUDACHI_DICT_PATH=/opt/sudachi/sudachi-dictionary-20251022/system_full.dic
+    SUDACHI_DICT_PATH=/opt/sudachi/sudachi-dictionary-20260428/system_full.dic
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c", "-e"]
 

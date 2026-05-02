@@ -21,6 +21,7 @@ fn dict_path() -> PathBuf {
     }
     let home = std::env::var("HOME").unwrap();
     let candidates = [
+        format!("{home}/.local/share/sudachi/sudachi-dictionary-20260428/system_full.dic"),
         format!("{home}/.local/share/sudachi/sudachi-dictionary-20260116/system_full.dic"),
         format!("{home}/.local/share/sudachi/sudachi-dictionary-20240409/system_full.dic"),
     ];
