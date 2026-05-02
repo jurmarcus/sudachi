@@ -95,12 +95,65 @@ pub use token_features::MorphemeFeatures;
 /// Convenience: load a Sudachi dictionary from a system-dic path.
 /// Thin wrapper over upstream sudachi's loader so callers don't need
 /// to reach the `sudachi` crate directly.
+///
+/// User dictionaries can be supplied via the
+/// `SUDACHI_USER_DICT_PATHS` env var: a colon-separated list of
+/// `.dic` paths produced by `sudachi ubuild`. They stack on top of
+/// the system dict at runtime (`LexiconSet` searches all of them per
+/// lookup). Empty / unset → no user dicts. Missing files → loader
+/// fails, surfaced as a `SudachiError`.
+///
+/// Build / consume convention: keep CSV sources in the consumer repo
+/// (e.g. `data/sudachi-custom/*.csv` in jisho) and `sudachi ubuild`
+/// them into a deploy directory; point `SUDACHI_USER_DICT_PATHS` at
+/// the built `.dic`. See the consumer's README for the full pipeline.
 pub fn load_dictionary<P: AsRef<std::path::Path>>(
     system_dic_path: P,
 ) -> Result<sudachi::JapaneseDictionary, ::sudachi::error::SudachiError> {
-    use ::sudachi::config::Config;
+    load_dictionary_with_user_dicts(system_dic_path, env_user_dicts())
+}
+
+/// As [`load_dictionary`] but with explicit user-dict paths. Useful
+/// for tests and for callers that want full control over the dict set
+/// instead of going through the env var.
+///
+/// Layering matches upstream's `Config::new`: starts from the default
+/// `sudachi.json` (which carries the OOV / input-text / path-rewrite
+/// plugin chain — without it Sudachi rejects the dict at load with
+/// "No out of vocabulary plugin provided"), then overrides the system
+/// dict path, then appends each user dict.
+pub fn load_dictionary_with_user_dicts<P, U>(
+    system_dic_path: P,
+    user_dict_paths: U,
+) -> Result<sudachi::JapaneseDictionary, ::sudachi::error::SudachiError>
+where
+    P: AsRef<std::path::Path>,
+    U: IntoIterator,
+    U::Item: AsRef<std::path::Path>,
+{
+    use ::sudachi::config::ConfigBuilder;
     use ::sudachi::dic::dictionary::JapaneseDictionary;
 
-    let config = Config::new(None, None, Some(system_dic_path.as_ref().to_path_buf()))?;
-    JapaneseDictionary::from_cfg(&config)
+    // Start from the default sudachi.json (plugins included), then
+    // override the system dict path, then layer user dicts on top.
+    let mut builder = ConfigBuilder::from_opt_file(None)?
+        .system_dict(system_dic_path.as_ref());
+    for u in user_dict_paths {
+        builder = builder.user_dict(u.as_ref());
+    }
+    JapaneseDictionary::from_cfg(&builder.build())
+}
+
+/// Read `SUDACHI_USER_DICT_PATHS` (`:`-separated list of `.dic`
+/// paths). Returns an empty vec when the var is unset or empty.
+fn env_user_dicts() -> Vec<std::path::PathBuf> {
+    std::env::var("SUDACHI_USER_DICT_PATHS")
+        .ok()
+        .map(|raw| {
+            raw.split(':')
+                .filter(|s| !s.is_empty())
+                .map(std::path::PathBuf::from)
+                .collect()
+        })
+        .unwrap_or_default()
 }
