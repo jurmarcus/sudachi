@@ -35,9 +35,25 @@ pub struct Morpheme {
     pub reading_form: String,
     /// Dictionary (lemma) form: `食べ` → `食べる`.
     /// Mirrors [`sudachi::Morpheme::dictionary_form`](crate::sudachi::Morpheme).
+    ///
+    /// **Invariant for downstream consumers**: after the full pipeline,
+    /// `dictionary_form` is the canonical lemma — even for merged
+    /// morphemes. `飲ん + だ → 飲んだ` keeps `dictionary_form = 飲む`
+    /// because [`combine`](crate::combine) and
+    /// [`repair`](crate::repair) merge stages clone the head morpheme
+    /// (which carries the lemma) and only update `surface`,
+    /// `reading_form`, `normalized_form`, and `char_range` to the
+    /// merged values. **Use this field for vocab/dictionary lookup.**
     pub dictionary_form: String,
-    /// Normalized form. Same as `dictionary_form` for most morphemes;
-    /// differs for kana-variant inputs (`れすとらん` → `レストラン`).
+    /// Normalized form. For raw Sudachi morphemes this is
+    /// `dictionary_form` with kana-variant folding (`れすとらん` →
+    /// `レストラン`). For morphemes that have been **merged** by
+    /// [`combine`](crate::combine) / [`repair`](crate::repair) stages,
+    /// this is rewritten to the **merged surface** (`飲ん + だ → 飲んだ`
+    /// gives `normalized_form = 飲んだ`). Treat as a "canonical surface"
+    /// — useful for display or surface-level dedupe, **not** for
+    /// vocab lookup. Use [`dictionary_form`](Self::dictionary_form) for
+    /// that.
     /// Mirrors [`sudachi::Morpheme::normalized_form`](crate::sudachi::Morpheme).
     pub normalized_form: String,
     /// Reading of the dictionary (lemma) form, in hiragana. For an
