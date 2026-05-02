@@ -126,6 +126,7 @@ pub fn canonical_stages() -> Vec<Stage> {
         split::tatte_particle::stage(),
         split::tan_suffix::stage(),
         split::tawake_noun::stage(),
+        split::proper_noun_with_particle::stage(),
         // ── Repair ───────────────────────────────────────────────────
         repair::hasa_noun::stage(),
         repair::n_tokenisation::stage(),
