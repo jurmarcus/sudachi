@@ -164,8 +164,12 @@ fn phase_two_recombine(split: Vec<Morpheme>, lexicon: &dyn Lexicon) -> Vec<Morph
             let combined_surface = format!("{}{}", current.surface, next.surface);
             let combined_reading = format!("{}{}", current.reading_form, next.reading_form);
             let mut merged = current.clone();
-            merged.surface = combined_surface.clone();
-            merged.normalized_form = combined_surface;
+            merged.surface = combined_surface;
+            // Preserve `current.normalized_form` (clone-of-head) as the
+            // deeper lemma. For potential forms like 作れる, raw Sudachi
+            // gives dict=作れる, norm=作る — overwriting norm to the
+            // merged surface (作れるんだ) loses the underlying 作る that
+            // vocab matchers can find.
             merged.reading_form = combined_reading;
             merged.pos = Pos::Verb;
             merged.part_of_speech = vec!["動詞".into()];
@@ -203,8 +207,10 @@ fn phase_two_recombine(split: Vec<Morpheme>, lexicon: &dyn Lexicon) -> Vec<Morph
                         prev.reading_form, current.reading_form, next.reading_form
                     );
                     let mut merged = prev.clone();
-                    merged.surface = candidate.clone();
-                    merged.normalized_form = candidate;
+                    merged.surface = candidate;
+                    // Preserve prev.normalized_form (clone-of-head) — see
+                    // the inline-ん arm above for why we don't overwrite
+                    // it with the merged surface.
                     merged.reading_form = combined_reading;
                     merged.pos = Pos::Verb;
                     merged.part_of_speech = vec!["動詞".into()];
