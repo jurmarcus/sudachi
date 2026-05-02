@@ -8,6 +8,7 @@ pub mod colloquial_negative_nee;
 pub mod colloquial_ran_nai;
 pub mod fused_interjection_particle;
 pub mod hasa_noun;
+pub mod honorific_lemma;
 pub mod n_tokenisation;
 pub mod orphaned_auxiliary;
 pub mod process_special_cases;
