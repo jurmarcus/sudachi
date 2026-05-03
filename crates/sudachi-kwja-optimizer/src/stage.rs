@@ -32,6 +32,13 @@ pub enum Phase {
     Normalize,
 }
 
+/// Type-erased stage closure: takes ownership of a [`Document`] +
+/// borrows a [`Lexicon`], returns the transformed [`Document`].
+///
+/// Aliased to keep [`Stage`]'s field type readable and to satisfy
+/// `clippy::type_complexity` without an `#[allow]`.
+pub type StageFn = dyn Fn(Document, &dyn Lexicon) -> Document + Send + Sync;
+
 /// One named transformation. The closure form (`process`) is
 /// type-erased so all stages can live in a single `Vec<Stage>`
 /// regardless of where they came from.
@@ -39,7 +46,7 @@ pub struct Stage {
     pub name: &'static str,
     pub phase: Phase,
     pub required_features: DocumentFeatures,
-    process: Box<dyn Fn(Document, &dyn Lexicon) -> Document + Send + Sync>,
+    process: Box<StageFn>,
 }
 
 impl Stage {
