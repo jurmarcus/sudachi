@@ -199,6 +199,10 @@ just pgrx-check
 
 Paradedb's workspace uses `[patch.crates-io]` to redirect `tantivy-tokenizer-api` to its forked tantivy, ensuring type compatibility across the crate boundary.
 
+## Architecture
+
+- [COMPREHENSION_PIPELINE.md](COMPREHENSION_PIPELINE.md) — **start here** for cross-crate architecture: what `sudachi-optimizer` vs `sudachi-kwja` vs `sudachi-morphology` each do, how they fit into the comprehension-oriented pipeline, the layer-decision rules for new code, and the audit of the existing 28 optimizer rules.
+
 ## Per-crate docs
 
 Every crate has its own `CLAUDE.md` and `AGENTS.md` with deeper detail:
