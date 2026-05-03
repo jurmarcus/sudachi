@@ -59,9 +59,7 @@ pub fn optimize<L: Lexicon>(mut doc: Document, pipeline: &Pipeline, lexicon: &L)
     let mut features = DocumentFeatures::scan(&doc);
 
     for stage in &pipeline.stages {
-        if !stage.required_features.is_empty()
-            && (features & stage.required_features).is_empty()
-        {
+        if !stage.required_features.is_empty() && (features & stage.required_features).is_empty() {
             continue;
         }
         let prev_shape = doc_shape(&doc);

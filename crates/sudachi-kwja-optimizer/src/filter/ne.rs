@@ -82,7 +82,10 @@ fn ne_value_is_real(value: &str) -> bool {
     if surface.is_empty() {
         return false;
     }
-    if surface.chars().all(|c| c.is_ascii() && c.is_ascii_punctuation()) {
+    if surface
+        .chars()
+        .all(|c| c.is_ascii() && c.is_ascii_punctuation())
+    {
         return false;
     }
 
@@ -167,10 +170,7 @@ mod tests {
             parse_ne_value("PERSON:山田太郎"),
             Some(("PERSON", "山田太郎"))
         );
-        assert_eq!(
-            parse_ne_value("LOCATION:東京"),
-            Some(("LOCATION", "東京"))
-        );
+        assert_eq!(parse_ne_value("LOCATION:東京"), Some(("LOCATION", "東京")));
     }
 
     #[test]
@@ -186,10 +186,7 @@ mod tests {
     #[test]
     fn parse_ne_value_allows_colon_in_surface() {
         // Time stamps include colons; we split on the first only.
-        assert_eq!(
-            parse_ne_value("TIME:12:30"),
-            Some(("TIME", "12:30"))
-        );
+        assert_eq!(parse_ne_value("TIME:12:30"), Some(("TIME", "12:30")));
     }
 
     // ── script helpers ─────────────────────────────────────────────
@@ -198,21 +195,21 @@ mod tests {
     fn pure_hiragana_detects_correctly() {
         assert!(is_pure_hiragana("やまだ"));
         assert!(is_pure_hiragana("きのう"));
-        assert!(!is_pure_hiragana("山田"));         // kanji
-        assert!(!is_pure_hiragana("ヤマダ"));       // katakana
-        assert!(!is_pure_hiragana("yamada"));       // latin
-        assert!(!is_pure_hiragana("やまだ太郎"));   // mixed
-        assert!(!is_pure_hiragana(""));             // empty
+        assert!(!is_pure_hiragana("山田")); // kanji
+        assert!(!is_pure_hiragana("ヤマダ")); // katakana
+        assert!(!is_pure_hiragana("yamada")); // latin
+        assert!(!is_pure_hiragana("やまだ太郎")); // mixed
+        assert!(!is_pure_hiragana("")); // empty
     }
 
     #[test]
     fn cjk_ideograph_detects_correctly() {
         assert!(is_cjk_unified_ideograph('山'));
         assert!(is_cjk_unified_ideograph('田'));
-        assert!(!is_cjk_unified_ideograph('や'));   // hiragana
-        assert!(!is_cjk_unified_ideograph('ヤ'));   // katakana
-        assert!(!is_cjk_unified_ideograph('a'));    // latin
-        assert!(!is_cjk_unified_ideograph('1'));    // digit
+        assert!(!is_cjk_unified_ideograph('や')); // hiragana
+        assert!(!is_cjk_unified_ideograph('ヤ')); // katakana
+        assert!(!is_cjk_unified_ideograph('a')); // latin
+        assert!(!is_cjk_unified_ideograph('1')); // digit
     }
 
     // ── per-tag filter rules ───────────────────────────────────────
@@ -345,7 +342,10 @@ mod tests {
         let doc = doc_with_ne("PERSON:山田"); // good
         let out = apply(doc, &EmptyLexicon);
         assert_eq!(out.sentences[0].base_phrases[0].features.len(), 1);
-        assert_eq!(out.sentences[0].base_phrases[0].features[0].value, "PERSON:山田");
+        assert_eq!(
+            out.sentences[0].base_phrases[0].features[0].value,
+            "PERSON:山田"
+        );
     }
 
     #[test]
