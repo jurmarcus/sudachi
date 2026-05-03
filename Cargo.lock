@@ -2076,6 +2076,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sudachi-kwja-optimizer"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.11.1",
+ "sudachi-kwja",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "sudachi-morphology"
 version = "0.1.0"
 dependencies = [

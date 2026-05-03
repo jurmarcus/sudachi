@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/sudachi-kwja",
+    "crates/sudachi-kwja-optimizer",
     "crates/sudachi-morphology",
     "crates/sudachi-optimizer",
     "crates/sudachi-search",
@@ -31,6 +32,7 @@ sudachi = { git = "https://github.com/jurmarcus/sudachi.rs", rev = "a7c50e44c98b
 # can apply uniformly across all consumers.
 sudachi = { git = "https://github.com/WorksApplications/sudachi.rs", rev = "b568decbbd4ea209dec847821dc1f5069a0f2ff5" }
 sudachi-kwja = { path = "crates/sudachi-kwja" }
+sudachi-kwja-optimizer = { path = "crates/sudachi-kwja-optimizer" }
 sudachi-morphology = { path = "crates/sudachi-morphology" }
 sudachi-optimizer = { path = "crates/sudachi-optimizer" }
 sudachi-search = { path = "crates/sudachi-search" }

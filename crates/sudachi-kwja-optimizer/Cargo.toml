@@ -1,0 +1,17 @@
+[package]
+name = "sudachi-kwja-optimizer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Document-tree rewriter that fixes known KWJA mis-tagging (over-tagged NE spans, malformed BIO sequences, label-spelling drift, etc.)"
+keywords = ["japanese", "kwja", "nlp", "post-processing", "ner"]
+categories = ["text-processing", "internationalization"]
+
+[lints]
+workspace = true
+
+[dependencies]
+sudachi-kwja.workspace = true
+bitflags = "2"
+thiserror = "2"
