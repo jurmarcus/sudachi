@@ -83,9 +83,9 @@ The single discriminator that decides where new code goes: **does it require jis
 
 **Phase organisation**: `Split → Repair → Combine → Cleanup → Disambiguation`, interleaved. Each rule lives in its own file; tests live alongside the rule. See [`crates/sudachi-optimizer/CLAUDE.md`](crates/sudachi-optimizer/CLAUDE.md) for internals.
 
-## Layer (2) — sudachi-kwja-optimizer (NEW slot)
+## Layer (2) — sudachi-kwja-optimizer
 
-**Crate**: `crates/sudachi-kwja-optimizer/` — to be created
+**Crate**: `crates/sudachi-kwja-optimizer/` — exists; one rule today (NE filter)
 **Job**: take raw KWJA output (computed on (1)'s clean morphemes) and fix its mechanical mistakes so each emitted tree is structurally clean.
 
 **Inputs**: KWJA's `Document` tree
@@ -98,9 +98,11 @@ The (2) optimizer captures the **mechanical** cleanups that don't need jisho dat
 
 **No jisho dependency**. Same as (1): generic KWJA cleanup, reusable by any KWJA consumer.
 
-### Initial rule plan
+### Current rules
 
-The crate starts mostly empty. The biggest concrete win available today is **NE span filtering** — KWJA's NE head is currently ignored entirely by jisho's proper_noun trie because there's no signal about whether NE output is good enough to use. A cleaned-up NE span set (confidence threshold + structural sanity checks) would be the foundation for the NE-augmented proper-noun hybrid rule that lives in (3).
+| Rule | Phase | What it does |
+|---|---|---|
+| `filter/ne` | Filter | Drop spurious NE feature entries via type-aware surface heuristics: pure-hiragana proper-noun tags, single-kanji/pure-hiragana ARTIFACT tags, malformed values, unknown tags. Preserves DATE / TIME / MONEY / PERCENT (which can legitimately be hiragana-only). |
 
 Other candidate rules — BP feature label normalisation, dependency arc validation, word-feature multi-label thresholding, PAS sanity checks — should be added only when concrete failure cases emerge in the regression corpus, not built speculatively.
 
@@ -328,12 +330,15 @@ The runnable harness for documented Jiten failure cases is at `crates/sudachi-op
 3. **New `split/passive_compound_noun`** — split contextual cases like `足蹴 + られた` (Jiten case #03). Gate carefully — `足蹴` is a real noun in `足蹴にする`.
 4. **Scope down `combine/auxiliary` and `combine/verb_dependant`** — see audit above.
 
-### Build (2) sudachi-kwja-optimizer crate
+### Extend (2) sudachi-kwja-optimizer
 
-1. Mirror sudachi-optimizer's structure: `lib.rs`, `optimizer.rs`, `pipeline.rs`, `stage.rs`, `lookup.rs`, rule subdirectories.
-2. Same `Lexicon` trait pattern for any rule needing dictionary corroboration (though the truly mechanical rules won't need it — KWJA cleanup that needs vocab is a (3) hybrid rule, not (2)).
-3. Initial rule: NE span filtering (confidence threshold + structural sanity). Unblocks the NE-augmented proper-noun hybrid rule in (3).
-4. Add other rules only when concrete failure cases emerge in the regression corpus.
+The crate exists with one rule (NE filter). Add new rules as concrete failure cases emerge in the regression corpus, not speculatively. Candidates:
+
+1. **BP feature label normalisation** (`normalize/`) — canonicalise `敬語=尊敬` vs `敬語=尊敬語` etc.
+2. **Dependency arc validation** (`validate/`) — defensive cleanup of malformed dep arcs (cycles, orphans, multi-head BPs).
+3. **Word-feature multi-label thresholding** (`filter/`) — drop low-confidence per-morpheme labels.
+
+Unblocked downstream by the existing NE filter: **NE-augmented proper-noun hybrid rule in (3)** that surfaces ProperNounSpans from KWJA NE entries the proper_noun trie didn't catch.
 
 ### NOT new (1) rules — populate the vocab and grammar tables instead
 
@@ -384,7 +389,7 @@ Treating these as one layer with a shared persisted output makes the consumer co
 - [`crates/sudachi-optimizer/CLAUDE.md`](crates/sudachi-optimizer/CLAUDE.md) — (1) layer internals
 - [`crates/sudachi-morphology/CLAUDE.md`](crates/sudachi-morphology/CLAUDE.md) — bidirectional conjugator library used by (3) matchers
 - [`crates/sudachi-kwja/CLAUDE.md`](crates/sudachi-kwja/CLAUDE.md) — KWJA inference port
-- `crates/sudachi-kwja-optimizer/CLAUDE.md` — (2) layer internals (TO BE CREATED)
+- [`crates/sudachi-kwja-optimizer/CLAUDE.md`](crates/sudachi-kwja-optimizer/CLAUDE.md) — (2) layer internals
 - [`CLAUDE.md`](CLAUDE.md) — workspace overview, dependency invariants
 - `~/CODE/jisho/schema/CLAUDE.md` — (3) consumer domain model: vocab, grammar, kanji, acquisition, scoring, card
 - `~/CODE/jisho/packages/rs/jisho-core/src/analysis/analyze.rs` — current (3) generation orchestration

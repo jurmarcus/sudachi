@@ -208,6 +208,7 @@ Paradedb's workspace uses `[patch.crates-io]` to redirect `tantivy-tokenizer-api
 Every crate has its own `CLAUDE.md` and `AGENTS.md` with deeper detail:
 
 - [crates/sudachi-kwja/CLAUDE.md](crates/sudachi-kwja/CLAUDE.md) — KWJA v2.4 inference port (DeBERTa-v2 base, candle)
+- [crates/sudachi-kwja-optimizer/CLAUDE.md](crates/sudachi-kwja-optimizer/CLAUDE.md) — Layer (2) Document-tree cleanup (NE filtering, label normalisation)
 - [crates/sudachi-morphology/CLAUDE.md](crates/sudachi-morphology/CLAUDE.md)
 - [crates/sudachi-optimizer/CLAUDE.md](crates/sudachi-optimizer/CLAUDE.md)
 - [crates/sudachi-search/CLAUDE.md](crates/sudachi-search/CLAUDE.md)
