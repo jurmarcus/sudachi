@@ -44,15 +44,15 @@ The three crates collaborate but **do not have symmetric roles**. The optimizer 
 
 3. **BM25 search-text encoding for passages.** `jisho-core/src/passage/search_text.rs:72-137` encodes structural atoms (bunsetsu surfaces as "B", base_phrase dep_type as "BP", PAS relations, semantic categories as "SEM") into `passage_parse_tree.search_text`. This indexed text is searched by `services/jisho-graphql/src/schema/passage/query.rs:68-81` for cross-passage retrieval. **Discourse relations are stored in the proto but never queried; cohesion was deleted in 2026-05 with "zero consumers".**
 
-**Consumption flow** — KWJA runs in **Phase 2** of the analyze pipeline (`jisho-core/src/analysis/analyze.rs:645+`), specifically `decorate_with_kwja_batch()`. The crucial fact: this runs **after** Phase 1 has already produced final span boundaries. KWJA cannot influence which morphemes group into which span. Its output is stored on `AnalyzedText.parse_tree` and read by Phase 2.5 (reading refinement) and Phase 3 (sense refinement). The pipeline is documented as **best-effort**: if KWJA is unreachable, `parse_tree = None` and the rest of the analysis still completes.
+**Consumption flow** — KWJA runs in **Phase 2** of the analyze pipeline (`jisho-core/src/analysis/analyze.rs:645+`), specifically `decorate_with_kwja_batch()`. Today this runs **after** Phase 1 has produced span boundaries — but the ordering is implementation-driven (the existing hybrid rules refine attributes of already-matched spans, not the boundaries themselves), not a fundamental constraint. Both Sudachi+optimizer output and KWJA output are persisted to the database alongside the analyzed text; any consumer that re-reads an analyzed passage gets both signals from the cache. **KWJA is treated as always-present infrastructure, not best-effort decoration.**
 
-**Therefore KWJA's purpose is**:
+**Therefore KWJA's purpose today is**:
 
-- Refine readings for furigana display when Sudachi's context-blind default is wrong
-- Bias sense picking when the speaker is using honorific/humble register
+- Refine readings for furigana display when Sudachi's context-blind default is wrong (Phase 2.5 hybrid rule)
+- Bias sense picking when the speaker is using honorific/humble register (Phase 3 hybrid rule)
 - Provide structural atoms (BP boundaries, PAS, SEM) for BM25 indexing of analyzed passages
 
-That is the entire current contribution. KWJA is **not** in the comprehension scoring loop, **not** in the matching loop, **not** consulted for span boundaries, **not** consulted for grammar pattern detection.
+That is the **current** contribution — but the architecture supports more. KWJA produces additional signal (NE spans, dependency edges, BP feature labels beyond 敬語, discourse relations) that no consumer currently reads. The "what KWJA could be used for but isn't" section below catalogues these as candidates for new hybrid rules. Because KWJA is always present and always cached, adding a new hybrid rule does not require a new architectural layer or a new conditional fallback — it just consumes both streams.
 
 ### sudachi-morphology — the bidirectional conjugation library
 
@@ -85,10 +85,11 @@ Input: raw Japanese text
                          │
                          ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│  Phase 2 — decorate_with_kwja_batch (best-effort)                │
+│  Phase 2 — decorate_with_kwja_batch                              │
 │    Flatten spans back into tokens, send to jisho-parse RPC       │
 │    Receive Document tree, attach to AnalyzedText.parse_tree      │
-│    On failure: parse_tree = None, pipeline continues             │
+│    Both Sudachi and KWJA outputs are persisted to the DB; any    │
+│    re-analysis of stored passages is a cache hit on both signals │
 └────────────────────────┬─────────────────────────────────────────┘
                          │
                          ▼
@@ -118,61 +119,95 @@ Input: raw Japanese text
        Search-text encoding (uses parse_tree atoms for BM25)
 ```
 
-The asymmetry is deliberate and load-bearing:
+The phase ordering is sequential by dependency, not by importance:
 
-- **Phase 1 (optimizer + matchers) is the critical path for comprehension.** Span boundaries, vocab/grammar matches, and scoring all live here. If this phase is wrong, the comprehension score is wrong.
-- **Phase 2/2.5/3 (KWJA-driven decoration) is best-effort polish.** It improves the *presentation* of analysis (furigana, register-appropriate glosses) and *retrieval* (BM25 atoms) but does not change the *what was matched* or *was the learner able to comprehend it* signal.
+- **Phase 1 (optimizer + matchers)** establishes span boundaries first because the matchers operate on flat morpheme sequences and need final boundaries to score against.
+- **Phase 2/2.5/3 (KWJA-driven refinement)** runs after spans because today's hybrid rules (reading refinement, sense register bias) refine attributes of already-matched spans rather than altering what was matched.
 
-KWJA is a renderer's friend, not the matcher's master. This is the single most important fact to internalise before deciding where a new rule belongs.
+This ordering is a current implementation choice, not a fundamental constraint. Both signals are computed on every analysis and persisted; the architecture is now best understood as **two complementary signal streams that both inform the final analysis**, not as a critical path with optional decoration. The Rust port of KWJA brought boot time from seconds (Python GIL) to ~50ms and made the service rock-solid; KWJA output is present on 100% of analyzed passages (e.g. all ~8,900 Anki-card passages have both Sudachi+optimizer and KWJA stored). New rules can rely on both being available.
+
+The implication for new architecture: **rules can be additive**. A rule that needs only morpheme features runs in the optimizer pipeline (28 examples today). A rule that needs only KWJA output runs in jisho-core (none today). A *hybrid* rule that needs both runs wherever both are accessible (today: jisho-core's Phase 2.5 reading refinement and Phase 3 sense register bias). The hybrid pattern is the natural home for everything that needs cross-signal aggregation — and with KWJA always available, hybrid rules don't need conditional fallback logic; they can just consume both inputs directly.
 
 ## The layered decision rules
 
-Adding a new rule? Use this decision tree, grounded in actual consumption:
+Adding a new rule? First decide **which signals it needs**, then **where it runs**:
 
 ```
-What does the change affect?
+What signals does the rule need?
    │
-   ├── Span boundaries / what gets matched as vocab or grammar
+   ├── Morpheme features only (Sudachi+optimizer output)
    │     │
-   │     └── sudachi-optimizer (Phase 1 input). NO other layer
-   │         can affect this — KWJA runs after spans are final.
+   │     └── Pure morpheme rule. Lives in sudachi-optimizer.
+   │         28 examples today (split/repair/combine/cleanup/disambiguation).
+   │
+   ├── KWJA features only (parse_tree output)
+   │     │
+   │     └── Pure KWJA rule. Lives in jisho-core (KWJA output is
+   │         attached to AnalyzedText after Phase 2; rule reads from
+   │         result.parse_tree).
+   │         Zero examples today, but candidates exist (see "What KWJA
+   │         could be used for" below — NE-derived ProperNounSpans is
+   │         the lowest-hanging).
+   │
+   └── Both signals (HYBRID rule)
+         │
+         └── Lives in jisho-core where both are accessible.
+             Today's examples: kwja_reading_refinement (Phase 2.5),
+             sense_pick::register_for_span (Phase 3). Both gate KWJA
+             evidence on a corroborating Sudachi+optimizer or vocab-
+             table signal — that gating pattern is the template for
+             new hybrid rules.
+
+Then: which kind of change?
+   │
+   ├── Span boundaries / what gets matched
+   │     │
+   │     └── Today: pure morpheme rule in sudachi-optimizer (Phase 1).
+   │         Future option: a HYBRID rule that gates a span merge on
+   │         KWJA bunsetsu evidence (e.g. merge `に + よって` only when
+   │         KWJA puts them in same BP). Would need to run as part of
+   │         (or before) Phase 1 matching — see "Future architecture"
+   │         below.
    │
    ├── A single dictionary-lookup unit appearing as one token
    │     │
    │     └── sudachi-optimizer combine rule (e.g. te-form + verb stem,
-   │         number + counter, prefix + noun).
+   │         number + counter, prefix + noun). Pure morpheme.
    │
    ├── A multi-token grammar pattern (なくてはならない, 〜ている, 〜て来る)
    │     │
    │     └── DO NOT merge in optimizer. The grammar matcher
-   │         (GrammarNgramMatcher etc.) walks a flat token stream
-   │         and pattern-matches across tokens. Add the pattern to
-   │         the grammar trie. The tokens must remain SEPARATE so
-   │         the matcher can find them.
+   │         (GrammarNgramMatcher etc.) walks a flat token stream and
+   │         pattern-matches across tokens. Add the pattern to the
+   │         grammar trie. Tokens must remain SEPARATE so the matcher
+   │         can find them. (Optionally a hybrid rule could validate
+   │         the match against KWJA dependency, but the trie hit comes
+   │         first.)
    │
    ├── A multi-token vocab expression / idiom (確かに, 手を抜く, 気がつく)
    │     │
    │     └── DO NOT merge in optimizer. Add the expression as a
    │         multi-token entry to the vocab table. The
-   │         ExpressionSpanMatcher will detect it via
-   │         vocab_common_prefix_search on the trie.
+   │         ExpressionSpanMatcher detects it via
+   │         vocab_common_prefix_search. (A hybrid rule could gate
+   │         confirmation on KWJA dep arc to avoid cross-clause false
+   │         matches.)
    │
    ├── Furigana display correctness for a homograph kanji
    │     │
-   │     └── Phase 2.5 territory. If KWJA's reading_tagger gets it
-   │         wrong, the fix is in kwja_reading_refinement.rs gating
-   │         logic, or in the vocab table entry that corroborates the
-   │         reading. Optimizer should not encode reading rules.
+   │     └── Hybrid rule. Today: kwja_reading_refinement.rs gates
+   │         KWJA's reading override on a vocab-table corroboration.
+   │         Same pattern for new homograph cases.
    │
    ├── Honorific / humble / polite gloss selection
    │     │
-   │     └── Phase 3 territory. Driven by KWJA's BP 敬語 feature.
-   │         No optimizer involvement.
+   │     └── Hybrid rule. Today: sense_pick::register_for_span uses
+   │         KWJA BP 敬語 feature. Generalisable to other BP feature
+   │         labels.
    │
    └── BM25 retrieval atoms for cross-passage search
          │
-         └── Phase 2 / search_text.rs territory. Encode new atoms in
-             the search_text encoder.
+         └── search_text.rs encoder. Reads parse_tree directly.
 ```
 
 ### The most common architectural mistake
@@ -307,24 +342,44 @@ These are tempting to add as optimizer rules but belong in the data layer, where
 
 The architectural significance: **adding new entries to the vocab and grammar tables does not require new optimizer rules and does not require a new architectural layer.** The matchers are already in place, the trie indices are already built, the comprehension scorer already classifies these match types. The only thing missing is curated data.
 
-### What KWJA could be used for but isn't (yet)
+### Candidate new hybrid rules (KWJA signal currently unused)
 
-KWJA produces several signals that are computed but not currently consumed downstream. Listing them here as known surface area, not as work to do unless a concrete need arises:
+KWJA produces several signals that are computed and persisted but not yet consumed. With KWJA always present, each of these is a candidate for a new hybrid rule in `jisho-core` that consumes both Sudachi+optimizer output and `parse_tree`:
 
-- **Dependency edges** — head and dep_type per BP. Could potentially be used to scope grammar pattern matching (e.g. only match `〜ている` within a single dependency subtree). Currently not used; matchers walk the flat stream regardless.
-- **Discourse relations** — cross-sentence connectives. Stored in proto, never read.
-- **PAS (predicate-argument structure)** in BP relations — encoded as BM25 atoms but never structurally traversed.
-- **Word-feature labels** beyond `敬語` — many per-word features computed; only the 敬語 register feature is read.
+| KWJA signal | Candidate hybrid rule | What it would solve |
+|---|---|---|
+| **NE spans** (B-PERSON / B-LOC / B-ORG runs) | Augment proper-noun detection: surface a `ProperNounSpan` when KWJA NE labels a token run AND the proper_noun trie didn't already cover it. | Novel character names / show-specific entities in YouTube subtitles, light novels, manga — content where the trie can't keep up. |
+| **Dependency edges** (head / dep_type per BP) | Validate `ExpressionSpanMatcher` matches: confirm a multi-token vocab idiom only when KWJA's dep arc connects the constituent morphemes (vs them being coincidentally adjacent across a clause boundary). | Lets the vocab table be populated aggressively with idioms (`手を抜く`, `気がつく`) without cross-clause false positives. |
+| **BP grouping** (which morphemes are in the same bunsetsu) | Aggregate compound-particle spans: when `に + よって` are in the same BP, attach a span pointing to the grammar-table entry `〜によって`. | Solves Jiten test cases #01 (`によって`) and #02 (`として`) without requiring an optimizer merge that would lose the constituent vocab lookups. |
+| **Word-feature labels** beyond 敬語 | Generalise `sense_pick::register_for_span`'s pattern to other BP features (e.g. tone, formality dimensions beyond keigo). | Better sense-picking for non-keigo register variation. |
+| **Discourse relations** | Cross-sentence connective detection for passage-level comprehension scoring (does the learner understand the discourse marker between sentences?). | Currently zero consumers; would need a downstream comprehension model that operates above sentence level. |
+| **PAS in BP relations** | Encoded as BM25 atoms but never structurally traversed. Could power "find sentences with this argument structure" queries. | Cross-passage retrieval beyond text similarity. |
 
-If a future feature wanted to use any of these, the ingestion path is already in place (Phase 2 stores the full Document tree); only a new consumer in `jisho-core` would be needed. Until such a consumer exists, do not propose architectural changes that "let KWJA do X" — KWJA already produces the signal; the bottleneck is downstream consumption.
+The architecture for adding any of these is **a new hybrid rule in `jisho-core`** that reads both signals — no new crate, no architectural restructure. The pattern to follow: `kwja_reading_refinement.rs` (gates KWJA evidence on a corroborating Sudachi+optimizer or vocab-table signal) and `sense_pick::register_for_span` (reads a specific BP feature, applies it to attribute selection).
+
+### Future architecture: hybrid rules and span-influencing rules
+
+The current architecture runs all hybrid rules **after** Phase 1 spans are final, because today's hybrid rules (reading refinement, sense bias) only refine attributes of already-matched spans. There is no fundamental reason a hybrid rule couldn't influence span boundaries — that ordering would just need to change.
+
+Two evolution paths are open if and when they become useful:
+
+1. **Span-validating hybrid rules (low-risk, additive).** Run after Phase 1 matching; can suppress, confirm, or annotate matches based on KWJA evidence. The dependency-validation idiom rule above is an example. Doesn't change the matcher logic; just filters the output. Migrate this first.
+
+2. **Span-influencing hybrid rules (higher-stakes, restructure).** Would need to run as part of (or before) Phase 1, possibly altering tokenisation or proposing spans the matchers wouldn't otherwise find. The compound-particle aggregation rule above is an example. Requires deciding how to merge proposals from multiple sources (KWJA-proposed spans + matcher-found spans + their conflicts). Migrate this only when there's a concrete win that span-validation can't capture.
+
+Both paths fit the additive feature-set model: rules consume the signals they need; the runner orchestrates them; nothing requires conditional fallback logic because both signals are always there.
+
+Until specific hybrid rules are designed and committed, do not pre-emptively restructure the pipeline. Add hybrid rules incrementally — `kwja_reading_refinement.rs` is the template; new rules are siblings.
 
 ## Why three crates and not one
 
-- **sudachi-optimizer** is rule-based and deterministic. CPU-bound. Updates whenever a tokenisation bug is discovered. Tested with golden fixtures and the Jiten regression harness. Loads ~70 MB Sudachi dictionary.
-- **sudachi-kwja** is neural and stochastic-but-deterministic-per-checkpoint. GPU-bound (fp16 on CUDA in production). Updates when the upstream KWJA model is retrained. Tested with argmax-equivalence vs the upstream Python reference. Loads ~1 GB of safetensors checkpoints + tokenizer artifacts.
+- **sudachi-optimizer** is rule-based and deterministic. CPU-bound, in-process. Updates whenever a tokenisation bug is discovered. Tested with golden fixtures and the Jiten regression harness. Loads ~70 MB Sudachi dictionary.
+- **sudachi-kwja** is neural and deterministic-per-checkpoint. GPU-bound (fp16 on CUDA in production); the Rust port took boot time from seconds (Python GIL bottleneck) to ~50 ms. Run via gRPC service (`jisho-parse`) to keep the GPU process pool out of every consumer's address space. Updates when the upstream KWJA model is retrained. Tested with argmax-equivalence vs the upstream Python reference. Loads ~1 GB of safetensors checkpoints + tokenizer artifacts.
 - **sudachi-morphology** is rule-based, deterministic, no external assets, runs on tiny inputs. Updates when a new conjugation pattern is documented. Tested with ~4,800 golden cases.
 
 Putting them in one crate would conflate dependency graphs, runtime requirements, and test discipline. Keeping them separate lets each have the right toolchain and lets consumers depend on only what they need.
+
+Operationally, **both Sudachi+optimizer output and KWJA output are persisted** alongside the analyzed text in the `passage_parse_tree` table. Re-analysing a stored passage is a cache hit on both signals; no recomputation. KWJA is treated as always-present infrastructure (100% coverage on the ~8,900 Anki-card passages, for example), not as a fallback-on-failure dependency. Hybrid rules can rely on that.
 
 ## Cross-references
 
