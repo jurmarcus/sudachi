@@ -197,8 +197,18 @@ impl VerbClass {
 
     /// Resolve a JMdict POS tag string to a [`VerbClass`].
     /// Accepts the abbreviated codes (`v1`, `v5b`, `v5k-s`, etc.).
+    ///
+    /// Special cases beyond the per-variant `#[serde(rename = ...)]`:
+    /// - `vs` (bare suru-noun marker) → [`Self::Suru`]. JMdict tags
+    ///   noun-verb-suru entries with bare `vs` AND `vs-i`/`vs-s`
+    ///   inconsistently; our analyzer treats them as suru-conjugated.
+    /// - `vs-c` (classical suru) → [`Self::Suru`]. Modern usage same.
     pub fn from_jmdict(tag: &str) -> Option<Self> {
-        // serde_json deserialization handles the rename mapping for us.
+        match tag {
+            "vs" | "vs-c" => return Some(Self::Suru),
+            _ => {}
+        }
+        // serde_json deserialization handles the per-variant rename mapping.
         // Wrap in quotes to make it a JSON string.
         let json = format!("\"{}\"", tag);
         serde_json::from_str(&json).ok()
