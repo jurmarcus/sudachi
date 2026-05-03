@@ -52,7 +52,7 @@ ENV PATH="/usr/local/bin:/root/.cargo/bin:$PATH" \
 # `--build-arg PARADEDB_REV=<sha>`) whenever the fork advances and you want
 # the build to pick up the new HEAD. The shallow clone always pulls main, so
 # the value is purely a buildkit cache key; doesn't need to be a real git ref.
-ARG PARADEDB_REV=2753a5c
+ARG PARADEDB_REV=1cb6da03
 RUN echo "paradedb-rev=${PARADEDB_REV}" && \
     git clone --depth 1 https://github.com/jurmarcus/paradedb /workspace
 
