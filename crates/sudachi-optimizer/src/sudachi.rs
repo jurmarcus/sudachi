@@ -18,3 +18,4 @@ pub use ::sudachi::dic::storage::{Storage, SudachiDicData};
 // Errors and the prelude.
 pub use ::sudachi::error::SudachiError;
 pub use ::sudachi::prelude::Morpheme;
+pub use ::sudachi::prelude::MorphemeList;

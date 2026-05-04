@@ -94,9 +94,9 @@ use std::sync::Arc;
 
 // Reach Sudachi types through sudachi-optimizer's gateway re-export so
 // the optimisation pipeline can apply uniformly across consumers.
-use sudachi_optimizer::sudachi::{
-    JapaneseDictionary, Mode, StatelessTokenizer, Tokenize,
-};
+use sudachi_optimizer::Optimizer;
+use sudachi_optimizer::pipeline::Pipeline;
+use sudachi_optimizer::sudachi::{JapaneseDictionary, Mode};
 
 /// Check if a part-of-speech should be filtered out for search purposes.
 ///
@@ -236,7 +236,14 @@ impl CompoundWord {
 /// // → ["食べる", "た"]
 /// ```
 pub struct SearchTokenizer {
-    inner: StatelessTokenizer<Arc<JapaneseDictionary>>,
+    /// All tokenization flows through `sudachi-optimizer::Optimizer` (with
+    /// an empty pipeline — sudachi-search does its own post-processing
+    /// rather than relying on optimizer rules). Going through Optimizer
+    /// rather than constructing our own `StatelessTokenizer` keeps
+    /// every consumer reaching Sudachi via the same gateway: when
+    /// upstream sudachi.rs APIs change, the wrapping happens in
+    /// sudachi-optimizer, not here.
+    inner: Arc<Optimizer>,
     /// Whether to use normalized form instead of surface form.
     use_normalized: bool,
     /// Whether to filter out function words (助動詞, 動詞/非自立可能).
@@ -255,25 +262,26 @@ impl SearchTokenizer {
     /// Use `.with_surface_form()` to disable normalization.
     /// Use `.with_all_tokens()` to preserve all tokens including function words.
     pub fn new(dictionary: Arc<JapaneseDictionary>) -> Self {
+        // Empty pipeline: sudachi-search post-processes raw morphemes
+        // itself rather than relying on optimizer rules.
+        let optimizer = Optimizer::new(dictionary).with_pipeline(Pipeline::empty());
+        Self::from_optimizer(Arc::new(optimizer))
+    }
+
+    /// Creates a new search tokenizer reusing an existing
+    /// `Arc<Optimizer>`. Useful when the caller already holds an
+    /// optimizer (e.g., to share the dictionary load + per-thread
+    /// tokenizer pool with other code paths). The optimizer's
+    /// pipeline does NOT run during `tokenize` — sudachi-search uses
+    /// only `Optimizer::tokenize_raw_multi_mode`.
+    pub fn from_optimizer(optimizer: Arc<Optimizer>) -> Self {
         Self {
-            inner: StatelessTokenizer::new(dictionary),
+            inner: optimizer,
             use_normalized: true,
             filter_function_words: true,
         }
     }
 
-    /// Creates a new search tokenizer from an existing StatelessTokenizer.
-    ///
-    /// Default configuration:
-    /// - **Normalized form**: Verbs/adjectives normalized to dictionary form
-    /// - **Filter function words**: Drops auxiliary verbs for optimal FTS matching
-    pub fn from_tokenizer(tokenizer: StatelessTokenizer<Arc<JapaneseDictionary>>) -> Self {
-        Self {
-            inner: tokenizer,
-            use_normalized: true,
-            filter_function_words: true,
-        }
-    }
 
     /// Preserve all tokens including function words.
     ///
@@ -419,17 +427,22 @@ impl SearchTokenizer {
             return Ok(Vec::new());
         }
 
-        // Tokenize with Mode C (longest/compound words)
-        let morphemes_c = self
+        // Single shared-lattice tokenize for both modes — runs the input
+        // rewrite + lattice build + best-path resolve + path-rewrite
+        // plugins ONCE, then applies mode-specific split_path per mode.
+        // ~1.7× faster than two sequential `tokenize` calls. The two
+        // returned MorphemeLists share input buffer storage via
+        // Rc<RefCell<>> so per-list InputBuffer cloning is also avoided.
+        let mut results = self
             .inner
-            .tokenize(input, Mode::C, false)
+            .tokenize_raw_multi_mode(input, &[Mode::C, Mode::B])
             .map_err(|e| SearchError::Tokenization(e.to_string()))?;
-
-        // Tokenize with Mode B (middle units) for sub-token extraction
-        let morphemes_b = self
-            .inner
-            .tokenize(input, Mode::B, false)
-            .map_err(|e| SearchError::Tokenization(e.to_string()))?;
+        // Order matches the modes slice above. `remove(1)` first to keep
+        // index 0 valid for the second `remove(0)` (a more idiomatic
+        // alternative would be `pop` from a reversed Vec, but that
+        // obscures the index-mode correspondence).
+        let morphemes_b = results.remove(1);
+        let morphemes_c = results.remove(0);
 
         // Build a lookup of Mode B tokens by their byte positions
         // Include POS info for filtering
@@ -498,8 +511,11 @@ impl SearchTokenizer {
         Ok(result)
     }
 
-    /// Returns a reference to the underlying Sudachi tokenizer.
-    pub fn inner(&self) -> &StatelessTokenizer<Arc<JapaneseDictionary>> {
+    /// Returns a reference to the underlying [`Optimizer`]. Useful for
+    /// callers that want to share the dictionary load + per-thread
+    /// tokenizer pool with non-search code paths via the optimizer's
+    /// other tokenize APIs.
+    pub fn optimizer(&self) -> &Arc<Optimizer> {
         &self.inner
     }
 
@@ -528,17 +544,15 @@ impl SearchTokenizer {
             return Ok(Vec::new());
         }
 
-        // Tokenize with Mode C (longest/compound words)
-        let morphemes_c = self
+        // Single shared-lattice tokenize for both modes (~1.7× faster
+        // than two sequential calls). See `tokenize_internal` for the
+        // detailed rationale.
+        let mut results = self
             .inner
-            .tokenize(input, Mode::C, false)
+            .tokenize_raw_multi_mode(input, &[Mode::C, Mode::B])
             .map_err(|e| SearchError::Tokenization(e.to_string()))?;
-
-        // Tokenize with Mode B (middle units)
-        let morphemes_b = self
-            .inner
-            .tokenize(input, Mode::B, false)
-            .map_err(|e| SearchError::Tokenization(e.to_string()))?;
+        let morphemes_b = results.remove(1);
+        let morphemes_c = results.remove(0);
 
         // Build a lookup of Mode B tokens by their byte positions
         let mut mode_b_tokens: Vec<(usize, usize, String)> = Vec::with_capacity(morphemes_b.len());
@@ -602,17 +616,15 @@ impl SearchTokenizer {
             return Ok((Vec::new(), Vec::new()));
         }
 
-        // Tokenize with Mode C (longest/compound words)
-        let morphemes_c = self
+        // Single shared-lattice tokenize for both modes (~1.7× faster
+        // than two sequential calls). See `tokenize_internal` for the
+        // detailed rationale.
+        let mut results = self
             .inner
-            .tokenize(input, Mode::C, false)
+            .tokenize_raw_multi_mode(input, &[Mode::C, Mode::B])
             .map_err(|e| SearchError::Tokenization(e.to_string()))?;
-
-        // Tokenize with Mode B (middle units)
-        let morphemes_b = self
-            .inner
-            .tokenize(input, Mode::B, false)
-            .map_err(|e| SearchError::Tokenization(e.to_string()))?;
+        let morphemes_b = results.remove(1);
+        let morphemes_c = results.remove(0);
 
         // Build a lookup of Mode B tokens by their byte positions
         let mut mode_b_tokens: Vec<(usize, usize, String)> = Vec::with_capacity(morphemes_b.len());

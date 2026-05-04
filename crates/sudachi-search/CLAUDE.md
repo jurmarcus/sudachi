@@ -28,14 +28,21 @@ This crate (Search mode):
 ```
                         SearchTokenizer::tokenize(input)
                                     │
+                                    ▼
+              sudachi_optimizer::Optimizer (empty pipeline)
+              (the single Sudachi gateway — never use upstream
+              `sudachi` directly; never construct a bare
+              StatelessTokenizer here either)
+                                    │
+                                    ▼
+              .tokenize_raw_multi_mode(input, &[Mode::C, Mode::B])
+              (single shared lattice build, ~1.7× faster than two
+              sequential `tokenize` calls)
+                                    │
                 ┌───────────────────┴───────────────────┐
                 │                                       │
-   sudachi_optimizer::sudachi::StatelessTokenizer       │
-   (the single Sudachi gateway — never use upstream     │
-   `sudachi` directly)                                  │
-                │                                       │
                 ▼                                       ▼
-   tokenize(input, Mode::C)                tokenize(input, Mode::B)
+        morphemes_c (Mode::C)                  morphemes_b (Mode::B)
         ["東京都立大学"]                  ["東京", "都立", "大学"]
                 │                                       │
                 └───────────────────┬───────────────────┘
@@ -60,7 +67,9 @@ This crate (Search mode):
 
 ```rust
 // CORRECT
-use sudachi_optimizer::sudachi::{JapaneseDictionary, Mode, StatelessTokenizer, Tokenize};
+use sudachi_optimizer::Optimizer;
+use sudachi_optimizer::pipeline::Pipeline;
+use sudachi_optimizer::sudachi::{JapaneseDictionary, Mode};
 
 // WRONG — only sudachi-optimizer is allowed to do this
 use sudachi::dic::dictionary::JapaneseDictionary;
@@ -93,7 +102,7 @@ pub enum SearchError { /* wraps sudachi::SudachiError */ }
 ```rust
 impl SearchTokenizer {
     pub fn new(dictionary: Arc<JapaneseDictionary>) -> Self;
-    pub fn from_tokenizer(t: StatelessTokenizer<Arc<JapaneseDictionary>>) -> Self;
+    pub fn from_optimizer(optimizer: Arc<sudachi_optimizer::Optimizer>) -> Self;
 
     pub fn with_surface_form(self) -> Self;
     pub fn with_normalized_form(self, enabled: bool) -> Self;
@@ -108,7 +117,7 @@ impl SearchTokenizer {
     pub fn tokenize_with_compounds(&self, input: &str)
         -> Result<(Vec<SearchToken>, Vec<CompoundWord>), SearchError>;
 
-    pub fn inner(&self) -> &StatelessTokenizer<Arc<JapaneseDictionary>>;
+    pub fn optimizer(&self) -> &Arc<sudachi_optimizer::Optimizer>;
 }
 
 pub fn extract_compounds(tokens: &[SearchToken]) -> Vec<CompoundWord>;

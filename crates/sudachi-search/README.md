@@ -196,7 +196,7 @@ impl CompoundWord {
 ```rust
 impl SearchTokenizer {
     pub fn new(dictionary: Arc<JapaneseDictionary>) -> Self;
-    pub fn from_tokenizer(tokenizer: StatelessTokenizer<Arc<JapaneseDictionary>>) -> Self;
+    pub fn from_optimizer(optimizer: Arc<sudachi_optimizer::Optimizer>) -> Self;
 
     pub fn with_surface_form(self) -> Self;
     pub fn with_normalized_form(self, enabled: bool) -> Self;
@@ -214,7 +214,7 @@ impl SearchTokenizer {
     pub fn tokenize_with_compounds(&self, input: &str)
         -> Result<(Vec<SearchToken>, Vec<CompoundWord>), SearchError>;
 
-    pub fn inner(&self) -> &StatelessTokenizer<Arc<JapaneseDictionary>>;
+    pub fn optimizer(&self) -> &Arc<sudachi_optimizer::Optimizer>;
 }
 
 pub fn extract_compounds(tokens: &[SearchToken]) -> Vec<CompoundWord>;
@@ -227,16 +227,22 @@ pub fn extract_compounds(tokens: &[SearchToken]) -> Vec<CompoundWord>;
 ```
 SearchTokenizer::tokenize("東京都立大学")
   │
-  ├─► StatelessTokenizer::tokenize(input, Mode::C)  → ["東京都立大学"]
-  ├─► StatelessTokenizer::tokenize(input, Mode::B)  → ["東京", "都立", "大学"]
-  │
-  └─► For each Mode C morpheme:
-        emit SearchToken { is_colocated: false }
-        for Mode B morpheme inside its byte span where text ≠ C:
-            emit SearchToken { is_colocated: true }
+  └─► sudachi_optimizer::Optimizer::tokenize_raw_multi_mode(
+          input, &[Mode::C, Mode::B]
+      )
+      // Single shared lattice build, ~1.7× faster than two
+      // sequential `tokenize` calls.
+        │
+        ├─► morphemes_c (Mode::C) → ["東京都立大学"]
+        ├─► morphemes_b (Mode::B) → ["東京", "都立", "大学"]
+        │
+        └─► For each Mode C morpheme:
+              emit SearchToken { is_colocated: false }
+              for Mode B morpheme inside its byte span where text ≠ C:
+                  emit SearchToken { is_colocated: true }
 ```
 
-Both calls go through `sudachi_optimizer::sudachi::StatelessTokenizer` — i.e. the single Sudachi gateway. Dictionaries are shared via `Arc` so a single dict can back many tokenizers.
+All access goes through `sudachi_optimizer::Optimizer` (constructed with an empty `Pipeline` since sudachi-search does its own post-processing) — i.e. the single Sudachi gateway. Dictionaries are shared via `Arc` so a single dict can back many tokenizers.
 
 ---
 
