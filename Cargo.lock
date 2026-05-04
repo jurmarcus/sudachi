@@ -2039,7 +2039,7 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 [[package]]
 name = "sudachi"
 version = "0.6.12-a1"
-source = "git+https://github.com/jurmarcus/sudachi.rs?rev=a7c50e44c98b44528742d65629f9b59e095a2bdd#a7c50e44c98b44528742d65629f9b59e095a2bdd"
+source = "git+https://github.com/jurmarcus/sudachi.rs?rev=4473f8137e08ce9ad909cde1a8ec74546f4f34e0#4473f8137e08ce9ad909cde1a8ec74546f4f34e0"
 dependencies = [
  "aho-corasick",
  "bitflags 2.11.1",

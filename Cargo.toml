@@ -20,17 +20,13 @@ license = "MIT"
 repository = "https://github.com/jurmarcus/sudachi"
 rust-version = "1.85"
 
-[patch."https://github.com/WorksApplications/sudachi.rs"]
-# Applies PR #313 (wasm32 compat: gate libloading behind cfg(not(wasm))).
-# Drop this patch when https://github.com/WorksApplications/sudachi.rs/pull/313 merges.
-sudachi = { git = "https://github.com/jurmarcus/sudachi.rs", rev = "a7c50e44c98b44528742d65629f9b59e095a2bdd" }
-
 [workspace.dependencies]
-# Upstream sudachi.rs — pinned rev, patched via jurmarcus/sudachi.rs for wasm32 compat.
-# DIRECT use of this dep is restricted to sudachi-optimizer; everything else
-# imports through sudachi-optimizer's re-exports so post-tokenisation rules
-# can apply uniformly across all consumers.
-sudachi = { git = "https://github.com/WorksApplications/sudachi.rs", rev = "b568decbbd4ea209dec847821dc1f5069a0f2ff5" }
+# jurmarcus/sudachi.rs — fork carrying performance + WASM additions on top
+# of upstream's develop. See ~/notes/projects/sudachi-rs/ for the full
+# story of what this fork adds. DIRECT use is restricted to
+# sudachi-optimizer; everything else imports through sudachi-optimizer's
+# re-exports so post-tokenisation rules apply uniformly across consumers.
+sudachi = { git = "https://github.com/jurmarcus/sudachi.rs", rev = "4473f8137e08ce9ad909cde1a8ec74546f4f34e0" }
 sudachi-kwja = { path = "crates/sudachi-kwja" }
 sudachi-kwja-optimizer = { path = "crates/sudachi-kwja-optimizer" }
 sudachi-morphology = { path = "crates/sudachi-morphology" }
