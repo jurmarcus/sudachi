@@ -223,11 +223,11 @@ impl WordModel {
         for enc in &encodings {
             let pad_len = t_max - enc.input_ids.len();
             input_ids_flat.extend_from_slice(&enc.input_ids);
-            input_ids_flat.extend(std::iter::repeat(pad_id).take(pad_len));
+            input_ids_flat.extend(std::iter::repeat_n(pad_id, pad_len));
             attn_flat.extend_from_slice(&enc.attention_mask);
-            attn_flat.extend(std::iter::repeat(0u32).take(pad_len));
+            attn_flat.extend(std::iter::repeat_n(0u32, pad_len));
             let mut wids = enc.word_ids.clone();
-            wids.extend(std::iter::repeat(None).take(pad_len));
+            wids.extend(std::iter::repeat_n(None, pad_len));
             let nw = wids
                 .iter()
                 .filter_map(|w| *w)
@@ -496,6 +496,7 @@ fn cohesion_pairwise_slice(t: &Tensor, row: usize, nw: usize) -> Result<Tensor> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use candle_core::Device;
     use std::path::PathBuf;
 
     fn home() -> PathBuf {

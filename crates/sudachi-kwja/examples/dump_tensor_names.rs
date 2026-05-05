@@ -1,5 +1,5 @@
 fn main() -> anyhow::Result<()> {
-    let cp = kwja::Checkpoint::load(&std::path::PathBuf::from(std::env::var("HOME")?).join(".local/share/jisho/checkpoints/word.safetensors"))?;
+    let cp = sudachi_kwja::Checkpoint::load(&std::path::PathBuf::from(std::env::var("HOME")?).join(".local/share/jisho/checkpoints/word.safetensors"))?;
     let mut names = cp.tensor_names();
     names.sort();
     for n in &names[..30] { println!("{n}"); }

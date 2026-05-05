@@ -1,6 +1,6 @@
 fn main() {
     // Test that the binary actually maps Sudachi POS to KWJA POS.
-    use kwja::pipeline::sudachi_to_kwja_pos;
+    use sudachi_kwja::pipeline::sudachi_to_kwja_pos;
     let cases = [
         ("補助記号", "特殊"),
         ("形状詞", "形容詞"),

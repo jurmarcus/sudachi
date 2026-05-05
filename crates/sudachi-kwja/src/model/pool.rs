@@ -28,6 +28,13 @@ use candle_core::{Device, Tensor};
 /// Materializes hidden to host once. For inference batches in the 1-100
 /// sentence range this is fine. If profiled hot, swap for an `index_add` /
 /// scatter-style GPU kernel.
+///
+/// `needless_range_loop` is allowed because the inner accumulator loop
+/// (`for d in 0..h { sums[w][d] += hidden_vec[batch_idx][sub_idx][d]; }`)
+/// iterates across the hidden-state dimension while the outer code uses
+/// independent `w`, `batch_idx`, `sub_idx` indices into other arrays —
+/// `.iter().enumerate()` would force a re-index that obscures the math.
+#[allow(clippy::needless_range_loop)]
 pub fn pool_subwords(
     hidden: &Tensor,
     word_ids: &[Vec<Option<u32>>],

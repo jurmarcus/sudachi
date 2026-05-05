@@ -110,6 +110,7 @@ impl CharModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use candle_core::Device;
     use std::path::PathBuf;
 
     fn home() -> PathBuf {

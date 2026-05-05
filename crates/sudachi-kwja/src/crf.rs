@@ -52,6 +52,12 @@ impl LinearChainCrf {
     ///
     /// `emissions`: (B, T, L) tensor of emission logits.
     /// Returns: `Vec<Vec<usize>>` of length B, each inner Vec length T.
+    ///
+    /// `needless_range_loop` is allowed throughout this method because the
+    /// indexed-loop shape (`for ti in 0..t { for label in 0..l { ... } }`)
+    /// matches Viterbi's canonical mathematical formulation; rewriting
+    /// through `.iter().enumerate()` would obscure the recurrence.
+    #[allow(clippy::needless_range_loop)]
     pub fn viterbi(&self, emissions: &Tensor) -> Result<Vec<Vec<usize>>> {
         let (b, t, l) = emissions.dims3().map_err(Error::from)?;
         let emissions = emissions.to_vec3::<f32>().map_err(Error::from)?;

@@ -267,6 +267,7 @@ fn softmax_argmax_with_max(logits: &Tensor) -> Result<Vec<(u32, f32)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use candle_core::Device;
     use std::path::PathBuf;
 
     fn paths() -> (PathBuf, PathBuf, PathBuf) {

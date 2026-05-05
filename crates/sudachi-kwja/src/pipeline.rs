@@ -465,6 +465,14 @@ impl Pipeline {
     /// Post-forward decode: takes WordLogits + the source Sudachi morphemes
     /// and produces a fully-populated Sentence. Used by both the batched
     /// (parse_morphemes) and single-row (parse_sentence_from_sudachi) paths.
+    ///
+    /// `needless_range_loop` is allowed because the cohesion-decoding inner
+    /// loops (`for r in 0..num_r { for tgt in 0..num_w { ... } }`) iterate
+    /// across multiple parallel arrays (`coh_t`, `bp_head_word`,
+    /// `bp_is_nominal`, etc.) that aren't co-iterable as a zip; rewriting
+    /// through `enumerate()` would force one slice into the iterator role
+    /// and re-index the others, obscuring the algorithm.
+    #[allow(clippy::needless_range_loop)]
     fn decode_sentence_from_logits(
         &self,
         word_logits: WordLogits,
@@ -557,20 +565,16 @@ impl Pipeline {
                         .to_string();
                 let mut subpos = sudachi_to_kwja_subpos(m.pos.get(1).map(String::as_str));
 
-                if let Some(&pos_id) = kwja_pos_argmax.get(i) {
-                    if let Some(kp) = labels.pos.get(pos_id as usize) {
-                        if !kp.is_empty() {
+                if let Some(&pos_id) = kwja_pos_argmax.get(i)
+                    && let Some(kp) = labels.pos.get(pos_id as usize)
+                        && !kp.is_empty() {
                             pos = kp.clone();
                         }
-                    }
-                }
-                if let Some(&sub_id) = kwja_subpos_argmax.get(i) {
-                    if let Some(ksub) = labels.subpos.get(sub_id as usize) {
-                        if !ksub.is_empty() && ksub != "*" {
+                if let Some(&sub_id) = kwja_subpos_argmax.get(i)
+                    && let Some(ksub) = labels.subpos.get(sub_id as usize)
+                        && !ksub.is_empty() && ksub != "*" {
                             subpos = ksub.clone();
                         }
-                    }
-                }
 
                 let features = word_features_per_morph.get(i).cloned().unwrap_or_default();
 
@@ -578,21 +582,17 @@ impl Pipeline {
                 // labels matching py); fall back to Sudachi's UniDic-style
                 // values if the model output is empty/wildcard.
                 let mut conjtype = clean_wildcard(Some(m.conjtype.as_str()));
-                if let Some(&id) = kwja_conjtype_argmax.get(i) {
-                    if let Some(label) = labels.conjtype.get(id as usize) {
-                        if !label.is_empty() && label != "*" {
+                if let Some(&id) = kwja_conjtype_argmax.get(i)
+                    && let Some(label) = labels.conjtype.get(id as usize)
+                        && !label.is_empty() && label != "*" {
                             conjtype = label.clone();
                         }
-                    }
-                }
                 let mut conjform = clean_wildcard(Some(m.conjform.as_str()));
-                if let Some(&id) = kwja_conjform_argmax.get(i) {
-                    if let Some(label) = labels.conjform.get(id as usize) {
-                        if !label.is_empty() && label != "*" {
+                if let Some(&id) = kwja_conjform_argmax.get(i)
+                    && let Some(label) = labels.conjform.get(id as usize)
+                        && !label.is_empty() && label != "*" {
                             conjform = label.clone();
                         }
-                    }
-                }
 
                 Morpheme {
                     surface: m.surface.clone(),
@@ -744,8 +744,8 @@ impl Pipeline {
                     (Some((_, prev_type)), "I") if prev_type != &ne_type => true,
                     _ => false,
                 };
-                if close_span {
-                    if let Some((start, ne_t)) = span_start.take() {
+                if close_span
+                    && let Some((start, ne_t)) = span_start.take() {
                         emit_ne_feature(
                             &mut base_phrases,
                             &word_to_bp,
@@ -755,7 +755,6 @@ impl Pipeline {
                             &ne_t,
                         );
                     }
-                }
                 if prefix == "B" {
                     span_start = Some((i, ne_type));
                 }
@@ -1266,7 +1265,7 @@ fn best_kwja_word_for_span(
             continue;
         }
         let overlap = overlap_end - overlap_start;
-        if best.map_or(true, |(_, b)| overlap > b) {
+        if best.is_none_or(|(_, b)| overlap > b) {
             best = Some((i, overlap));
         }
     }
