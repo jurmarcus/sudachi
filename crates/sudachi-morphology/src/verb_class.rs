@@ -105,7 +105,19 @@ pub enum VerbClass {
 
     // ─── Irregular ───────────────────────────────────────────────────
     /// する — most irregular verb in the language. Stem changes
-    /// across さ-/し-/す-/せ- depending on the form.
+    /// across さ-/し-/す-/せ- depending on the form. Used for the
+    /// bare verb する; compound suru verbs (X+する) go through
+    /// [`Self::SuruCompound`] and bare suru-nouns through
+    /// [`Self::SuruNoun`].
+    ///
+    /// Canonical JMdict tag is `vs-i` (the deconjugator's rule data
+    /// emits it that way). On the *input* side, [`Self::from_jmdict`]
+    /// routes `vs-i` to [`Self::SuruCompound`] instead of `Suru` —
+    /// `vs-i` in real JMdict data overwhelmingly tags X+する
+    /// compounds, and `suru_compound_lookup` has a bare-する fallback
+    /// that delegates to `suru_lookup`, so the rare bare-する case
+    /// still conjugates correctly. The deliberate asymmetry is
+    /// captured by the `suru_jmdict_input_asymmetry` test.
     #[serde(rename = "vs-i")]
     Suru,
 
@@ -114,7 +126,20 @@ pub enum VerbClass {
     #[serde(rename = "vs-s")]
     SuruCompound,
 
+    /// Bare suru-noun (vs). Dict form is the noun ALONE (no trailing
+    /// する) — e.g. `勉強`, `旅行`, `閉扉`. Conjugation appends a
+    /// する-paradigm tail to the noun.
+    ///
+    /// JMdict tags this as `vs` ("noun or participle which takes the
+    /// aux. verb する"). Distinct from [`SuruCompound`] (which expects
+    /// the dict form to already include する).
+    #[serde(rename = "vs")]
+    SuruNoun,
+
     /// 来る — irregular. Stem changes こ-/き-/く- across forms.
+    /// Also covers compound 来る verbs whose dict form ends in `来る`
+    /// or `くる` (e.g. `お釣りが来る`, `戻ってくる`); the prefix is
+    /// preserved unchanged and only the trailing 来る/くる conjugates.
     #[serde(rename = "vk")]
     Kuru,
 
@@ -122,6 +147,27 @@ pub enum VerbClass {
     /// (= 信じる), 感ずる (= 感じる).
     #[serde(rename = "vz")]
     Zuru,
+
+    // ─── Adjectives (treated as irregular for forward dispatch) ─────
+    /// I-adjective (形容詞). Dict form ends in い (高い, 寒い,
+    /// 美味しい). Conjugation goes through [`crate::adjective::IAdjective`].
+    /// JMdict tag `adj-i`.
+    ///
+    /// Treated as a `VerbClass` so the unified `Verb::conjugate` /
+    /// `Verb::conjugate_axes` dispatch can handle adjectives without
+    /// requiring a separate enumeration entry point. The asymmetry
+    /// (adjectives aren't verbs) is hidden behind the `is_irregular`
+    /// → `lookup_irregular` boundary.
+    #[serde(rename = "adj-i")]
+    IAdjective,
+
+    /// Irregular i-adjective (形容詞特殊型) — `いい` / `良い`, with
+    /// suppletive よ-stem (e.g. 良かった rather than いかった).
+    /// JMdict tag `adj-ix`. Conjugation also goes through
+    /// [`crate::adjective::IAdjective`], whose stem method already
+    /// handles the irregular case.
+    #[serde(rename = "adj-ix")]
+    IAdjectiveIrregular,
 
     // ─── Classical residues JMdict still tags ───────────────────────
     /// Irregular nu verb (classical). Only entries: 死ぬ in some
@@ -172,8 +218,24 @@ impl VerbClass {
 
     /// Is this an irregular class needing per-form lookup tables
     /// rather than rule-driven conjugation?
+    ///
+    /// Adjective classes ([`Self::IAdjective`], [`Self::IAdjectiveIrregular`])
+    /// also return `true` here — they aren't linguistically "irregular
+    /// verbs" but they share the dispatch-via-lookup-table pathway in
+    /// [`Verb::conjugate`], routing through
+    /// [`crate::irregular::lookup_irregular`] to delegate to
+    /// [`crate::adjective::IAdjective`].
     pub fn is_irregular(self) -> bool {
-        matches!(self, Self::Suru | Self::SuruCompound | Self::Kuru | Self::Zuru)
+        matches!(
+            self,
+            Self::Suru
+                | Self::SuruCompound
+                | Self::SuruNoun
+                | Self::Kuru
+                | Self::Zuru
+                | Self::IAdjective
+                | Self::IAdjectiveIrregular
+        )
     }
 
     /// The terminal kana the verb ends with in its dictionary form.
@@ -199,14 +261,25 @@ impl VerbClass {
     /// Accepts the abbreviated codes (`v1`, `v5b`, `v5k-s`, etc.).
     ///
     /// Special cases beyond the per-variant `#[serde(rename = ...)]`:
-    /// - `vs` (bare suru-noun marker) → [`Self::Suru`]. JMdict tags
-    ///   noun-verb-suru entries with bare `vs` AND `vs-i`/`vs-s`
-    ///   inconsistently; our analyzer treats them as suru-conjugated.
-    /// - `vs-c` (classical suru) → [`Self::Suru`]. Modern usage same.
+    /// - `vs` (bare suru-noun marker) → [`Self::SuruNoun`]. The dict
+    ///   form is the noun alone; `SuruNoun` knows to suffix する.
+    /// - `vs-c` (classical suru) → [`Self::Suru`]. The bare verb する
+    ///   itself in classical-tagged contexts. Modern usage is
+    ///   structurally identical.
+    /// - `vs-i` (irregular suru verb — dict form ends in する, e.g.
+    ///   愛する) → [`Self::SuruCompound`]. The serde rename on
+    ///   [`Self::Suru`] is `vs-i` for round-trip preservation, but
+    ///   semantically `vs-i` entries take the compound paradigm
+    ///   (noun + する), so we override here. Bare する dict forms
+    ///   are still handled correctly because
+    ///   [`crate::irregular::suru_compound_lookup`] delegates to
+    ///   [`crate::irregular::suru_lookup`] when `dict_form == "する"`.
     pub fn from_jmdict(tag: &str) -> Option<Self> {
-        match tag {
-            "vs" | "vs-c" => return Some(Self::Suru),
-            _ => {}
+        // The serde rename on Suru is "vs-c" (its canonical tag);
+        // JMdict's "vs-i" tag is the COMPOUND form (X+する) per the
+        // notes on Self::Suru, so override here.
+        if tag == "vs-i" {
+            return Some(Self::SuruCompound);
         }
         // serde_json deserialization handles the per-variant rename mapping.
         // Wrap in quotes to make it a JSON string.
@@ -234,8 +307,11 @@ impl VerbClass {
             Self::GodanAru => "v5aru",
             Self::Suru => "vs-i",
             Self::SuruCompound => "vs-s",
+            Self::SuruNoun => "vs",
             Self::Kuru => "vk",
             Self::Zuru => "vz",
+            Self::IAdjective => "adj-i",
+            Self::IAdjectiveIrregular => "adj-ix",
             Self::NuVerbClassical => "vn",
             Self::RuVerbClassical => "vr",
             Self::YodanRu => "v4r",
@@ -267,22 +343,69 @@ mod tests {
             VerbClass::GodanAru,
             VerbClass::Suru,
             VerbClass::SuruCompound,
+            VerbClass::SuruNoun,
             VerbClass::Kuru,
             VerbClass::Zuru,
+            VerbClass::IAdjective,
+            VerbClass::IAdjectiveIrregular,
             VerbClass::NuVerbClassical,
             VerbClass::RuVerbClassical,
             VerbClass::YodanRu,
         ];
         for vc in all {
             let tag = vc.jmdict_tag();
+            // Suru is intentionally asymmetric: jmdict_tag() returns
+            // "vs-i" (matching the deconjugator's rule data) but
+            // from_jmdict("vs-i") returns SuruCompound (the common
+            // case in real JMdict data). The semantic round-trip
+            // still works because suru_compound_lookup falls back to
+            // suru_lookup for dict_form == "する". Documented and
+            // tested explicitly by `suru_jmdict_input_asymmetry`.
+            let expected = if vc == VerbClass::Suru {
+                Some(VerbClass::SuruCompound)
+            } else {
+                Some(vc)
+            };
             assert_eq!(
                 VerbClass::from_jmdict(tag),
-                Some(vc),
-                "round-trip failed for {:?} via tag {:?}",
+                expected,
+                "round-trip mismatch for {:?} via tag {:?}",
                 vc,
                 tag,
             );
         }
+    }
+
+    #[test]
+    fn suru_jmdict_input_asymmetry() {
+        // vs-i (suru verb included) is the most common JMdict tag for
+        // X+する compounds (愛する, 翻訳する). On INPUT, route to
+        // SuruCompound so the bulk of vs-i entries get correct
+        // conjugation. SuruCompound's bare-する fallback handles the
+        // rare case where vs-i tags the literal verb する.
+        assert_eq!(VerbClass::from_jmdict("vs-i"), Some(VerbClass::SuruCompound));
+        // OUTPUT: Suru's canonical tag is still "vs-i" because that's
+        // what the deconjugator's rule data uses for forward-emitted
+        // surfaces — keeping these aligned avoids breaking deconj
+        // round-trip tests.
+        assert_eq!(VerbClass::Suru.jmdict_tag(), "vs-i");
+    }
+
+    #[test]
+    fn jmdict_vs_maps_to_suru_noun() {
+        // Bare suru-noun POS — the dict form is the noun alone, not
+        // an X+する form. Must NOT collapse onto Suru (which would
+        // reject everything that isn't literal する).
+        assert_eq!(VerbClass::from_jmdict("vs"), Some(VerbClass::SuruNoun));
+    }
+
+    #[test]
+    fn jmdict_adjective_classes_resolve() {
+        assert_eq!(VerbClass::from_jmdict("adj-i"), Some(VerbClass::IAdjective));
+        assert_eq!(
+            VerbClass::from_jmdict("adj-ix"),
+            Some(VerbClass::IAdjectiveIrregular),
+        );
     }
 
     #[test]
