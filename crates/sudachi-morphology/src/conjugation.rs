@@ -162,9 +162,10 @@ impl Default for Conjugation {
 /// Voice axis — what the subject's relationship to the verb is.
 /// `Causative` and `Passive` compose into `CausativePassive`; that's the
 /// only meaningful composition. Other voices are mutually exclusive.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Voice {
     /// Plain — no voice transformation. 食べる.
+    #[default]
     None,
     /// Causative — させる (ichidan) / ase-row + る (godan). 食べさせる.
     Causative,
@@ -185,26 +186,27 @@ pub enum Voice {
 }
 
 /// Polarity axis — affirmative or negated.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Polarity { Affirmative, Negative }
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Polarity { #[default] Affirmative, Negative }
 
 /// Politeness axis — plain (です/だ-less) or polite (ます).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Politeness { Plain, Polite }
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Politeness { #[default] Plain, Polite }
 
 /// Tense axis — non-past (default) or past.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Tense { Nonpast, Past }
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Tense { #[default] Nonpast, Past }
 
 /// Mood axis — what kind of clause this verb form heads. Most moods
 /// are *terminating* (they don't take further Polarity/Tense modifiers
 /// because they encode their own).
 ///
 /// `Indicative` is the default and combines freely with all other axes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Mood {
     /// Indicative / declarative — the default. Combines with every
     /// other axis: Polite × Negative × Past × ...
+    #[default]
     Indicative,
     /// Imperative — ろ/え/positive command. 食べろ, 走れ. Doesn't take
     /// Past or Negative (use ImperativeNegative for the latter).
@@ -622,22 +624,6 @@ impl Default for AxesSoFar {
             tense: Tense::Nonpast,
         }
     }
-}
-
-impl Default for Voice {
-    fn default() -> Self { Voice::None }
-}
-impl Default for Politeness {
-    fn default() -> Self { Politeness::Plain }
-}
-impl Default for Polarity {
-    fn default() -> Self { Polarity::Affirmative }
-}
-impl Default for Tense {
-    fn default() -> Self { Tense::Nonpast }
-}
-impl Default for Mood {
-    fn default() -> Self { Mood::Indicative }
 }
 
 impl AxesSoFar {

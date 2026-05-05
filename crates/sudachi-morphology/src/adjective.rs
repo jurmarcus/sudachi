@@ -133,15 +133,11 @@ impl IAdjective {
     }
 
     /// Provisional uses dict form + なら (no stem change), even for
-    /// いい (いいなら, not よなら).
+    /// いい (いいなら, not よなら) — so no special-case branching is
+    /// needed.
     pub fn provisional_nara(&self) -> Conjugated {
-        let base = if self.is_ii_special() {
-            self.dict_form.clone()
-        } else {
-            self.dict_form.clone()
-        };
         Conjugated {
-            surface: format!("{}なら", base),
+            surface: format!("{}なら", self.dict_form),
             form: ConjForm::ProvisionalNara,
         }
     }
