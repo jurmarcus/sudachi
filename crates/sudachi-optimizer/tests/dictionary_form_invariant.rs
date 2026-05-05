@@ -16,8 +16,17 @@ use std::sync::Arc;
 use sudachi_optimizer::{Optimizer, load_dictionary};
 
 fn dict_path() -> PathBuf {
+    // Honor SUDACHI_DICT_PATH only if it actually exists. A stale env
+    // var pointing at a missing dictionary version (e.g. an older
+    // jisho `.envrc` referencing 20260116 after the user upgraded to
+    // 20260428) used to bypass the candidate fallback below and
+    // produce a misleading "No such file or directory" failure. Now
+    // we fall through to candidates when the env path is broken.
     if let Ok(p) = std::env::var("SUDACHI_DICT_PATH") {
-        return PathBuf::from(p);
+        let p = PathBuf::from(p);
+        if p.exists() {
+            return p;
+        }
     }
     let home = std::env::var("HOME").unwrap();
     let candidates = [

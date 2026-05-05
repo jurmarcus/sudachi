@@ -117,7 +117,11 @@ mod tests {
         PathBuf::from(std::env::var("HOME").unwrap())
     }
 
+    /// Integration test — needs KWJA char checkpoint + jisho's
+    /// candle-transformers patch. See `model::deberta::tests::
+    /// loads_word_backbone` for prereqs / `--ignored` notes.
     #[test]
+    #[ignore = "needs KWJA checkpoint + jisho's candle-transformers patch"]
     fn char_model_loads_and_forwards() {
         let ckpt_path = home().join(".local/share/jisho/checkpoints/char.safetensors");
         let vocab_path = home().join(".local/share/jisho/checkpoints/kwja-char/vocab.txt");
@@ -132,7 +136,9 @@ mod tests {
         assert_eq!(logits.dims(), &[1, 9, 2]);
     }
 
+    /// See `char_model_loads_and_forwards` for prereqs / `--ignored` notes.
     #[test]
+    #[ignore = "needs KWJA checkpoint + jisho's candle-transformers patch"]
     fn char_model_decodes_segment_labels() {
         let ckpt_path = home().join(".local/share/jisho/checkpoints/char.safetensors");
         let vocab_path = home().join(".local/share/jisho/checkpoints/kwja-char/vocab.txt");

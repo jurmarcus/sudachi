@@ -45,10 +45,12 @@ impl SequentialMlpHead {
 /// Pairwise word-selection head — generalizes KWJA's biaffine pattern to N
 /// output labels. Matches KWJA-Python's `WordSelectionHead`:
 ///
-///     h_source = self.l_source(pooled)                              # (B, S, H)
-///     h_target = self.l_target(pooled)                              # (B, S, H)
-///     hidden = activation(h_source.unsqueeze(2) + h_target.unsqueeze(1))  # (B, S, S, H)
-///     return self.output_layer(hidden)                              # (B, S, S, num_labels)
+/// ```text
+/// h_source = self.l_source(pooled)                              # (B, S, H)
+/// h_target = self.l_target(pooled)                              # (B, S, H)
+/// hidden = activation(h_source.unsqueeze(2) + h_target.unsqueeze(1))  # (B, S, S, H)
+/// return self.output_layer(hidden)                              # (B, S, S, num_labels)
+/// ```
 ///
 /// Used by:
 ///   * `dependency_parser`: num_labels=1, output_layer has no bias.
@@ -143,9 +145,11 @@ impl LoRADelta {
 
     /// Returns (H, H, L). Single bulk matmul rather than the per-label loop:
     ///
-    ///     dense_a: (H, R, L) → permute (L, H, R) → contig
-    ///     dense_b: (R, H, L) → permute (L, R, H) → contig
-    ///     matmul → (L, H, H) → permute (H, H, L)
+    /// ```text
+    /// dense_a: (H, R, L) → permute (L, H, R) → contig
+    /// dense_b: (R, H, L) → permute (L, R, H) → contig
+    /// matmul → (L, H, H) → permute (H, H, L)
+    /// ```
     ///
     /// One CUDA kernel launch instead of L. KWJA uses L up to 64 for
     /// bp_features, so the launch-overhead saving is substantial on GPU.

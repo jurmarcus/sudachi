@@ -1475,7 +1475,12 @@ mod tests {
         let _ = Pipeline::load(&dir).unwrap();
     }
 
+    /// Integration test — drives the full Pipeline (char + word
+    /// checkpoints loaded, full parse). Needs both KWJA checkpoints
+    /// AND jisho's candle-transformers patch. See `model::deberta::
+    /// tests::loads_word_backbone` for prereqs / `--ignored` notes.
     #[test]
+    #[ignore = "needs KWJA checkpoints + jisho's candle-transformers patch"]
     fn pipeline_parse_returns_one_item_per_input() {
         let dir = checkpoint_dir();
         if !dir.join("char.safetensors").exists() {
@@ -1556,7 +1561,10 @@ mod tests {
         }
     }
 
+    /// See `pipeline_parse_returns_one_item_per_input` for prereqs /
+    /// `--ignored` notes.
     #[test]
+    #[ignore = "needs KWJA checkpoints + jisho's candle-transformers patch"]
     fn parse_morphemes_passthrough() {
         let dir = checkpoint_dir();
         if !dir.join("char.safetensors").exists() {

@@ -347,7 +347,18 @@ mod tests {
         PathBuf::from(std::env::var("HOME").unwrap())
     }
 
+    /// Integration test — requires:
+    ///   - Real KWJA word.safetensors checkpoint (~1.5 GB) at the
+    ///     home() path below.
+    ///   - The patched candle-transformers from jisho's
+    ///     `.patches/candle-transformers/`. The unpatched upstream
+    ///     panics with "Need a model that contains a conv layer"
+    ///     inside `forward()` (debertav2.rs:931 has unimplemented!()).
+    /// `#[ignore]` so default `cargo test` is green; run with
+    /// `cargo test -- --ignored` from jisho's workspace where both
+    /// prereqs are satisfied.
     #[test]
+    #[ignore = "needs KWJA checkpoint + jisho's candle-transformers patch"]
     fn loads_word_backbone() {
         let path = home().join(".local/share/jisho/checkpoints/word.safetensors");
         if !path.exists() {
@@ -364,7 +375,9 @@ mod tests {
         assert_eq!(hidden.dims(), &[1, 4, crate::constants::HIDDEN_SIZE]);
     }
 
+    /// See `loads_word_backbone` for prereqs / `--ignored` notes.
     #[test]
+    #[ignore = "needs KWJA checkpoint + jisho's candle-transformers patch"]
     fn loads_char_backbone() {
         let path = home().join(".local/share/jisho/checkpoints/char.safetensors");
         if !path.exists() {

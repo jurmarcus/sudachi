@@ -503,7 +503,11 @@ mod tests {
         PathBuf::from(std::env::var("HOME").unwrap())
     }
 
+    /// Integration test — needs KWJA word checkpoint + jisho's
+    /// candle-transformers patch. See `model::deberta::tests::
+    /// loads_word_backbone` for prereqs / `--ignored` notes.
     #[test]
+    #[ignore = "needs KWJA checkpoint + jisho's candle-transformers patch"]
     fn word_model_loads_and_forwards() {
         let ckpt_path = home().join(".local/share/jisho/checkpoints/word.safetensors");
         let tokenizer_path = home().join(".local/share/jisho/checkpoints/kwja-tokenizer/tokenizer.json");
