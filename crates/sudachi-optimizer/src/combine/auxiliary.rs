@@ -156,7 +156,7 @@ fn passes_blacklist(prev: &Morpheme, current: &Morpheme, lexicon: &dyn Lexicon) 
     // Without this guard we'd misclassify negative-ん + だ
     // (slurred neg) as past tense.
     if current.surface == "だ" {
-        let prev_ends_in_n = prev.surface.chars().last() == Some('ん');
+        let prev_ends_in_n = prev.surface.ends_with('ん');
         if !prev_ends_in_n {
             return false;
         }

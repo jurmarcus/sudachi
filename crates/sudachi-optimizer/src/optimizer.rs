@@ -106,7 +106,7 @@ impl Optimizer {
         let lexicon = morphemes.dict().lexicon();
         Ok(morphemes
             .iter()
-            .map(|m| Morpheme::from_sudachi(&m, &lexicon))
+            .map(|m| Morpheme::from_sudachi(&m, lexicon))
             .collect())
     }
 

@@ -93,15 +93,14 @@ pub fn apply(mut morphemes: Vec<Morpheme>, _lexicon: &dyn Lexicon) -> Vec<Morphe
             }
         }
 
-        if surface == "家" && matches!(pos, Pos::Suffix) && i + 1 < n {
-            if matches!(morphemes[i + 1].pos, Pos::Particle)
+        if surface == "家" && matches!(pos, Pos::Suffix) && i + 1 < n
+            && matches!(morphemes[i + 1].pos, Pos::Particle)
                 && KE_PARTICLES.contains(&morphemes[i + 1].surface.as_str())
             {
                 morphemes[i].pos = Pos::Noun;
                 morphemes[i].part_of_speech = vec!["名詞".into()];
                 changed = true;
             }
-        }
 
         if surface == "山" && matches!(pos, Pos::Suffix) {
             morphemes[i].pos = Pos::Noun;

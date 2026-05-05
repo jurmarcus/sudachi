@@ -100,7 +100,7 @@ impl Morpheme {
         use ::sudachi::dic::word_id::WordId;
 
         let surface: String = m.surface().to_string();
-        let part_of_speech: Vec<String> = m.part_of_speech().iter().cloned().collect();
+        let part_of_speech: Vec<String> = m.part_of_speech().to_vec();
         let pos = Pos::from_part_of_speech(&part_of_speech);
         let begin = m.begin_c();
         let end = m.end_c();

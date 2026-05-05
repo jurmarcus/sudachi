@@ -23,6 +23,12 @@ pub enum Phase {
     Disambiguation,
 }
 
+/// The boxed closure shape stored inside [`Stage::process`]. Lifted
+/// to a type alias so the field doesn't trip clippy's
+/// `type_complexity` lint and so it can be referenced by name.
+type StageProcess =
+    Box<dyn Fn(Vec<Morpheme>, &dyn Lexicon) -> Vec<Morpheme> + Send + Sync>;
+
 /// One named transformation. The closure form (`process`) is
 /// type-erased so all stages can live in a single `Vec<Stage>`
 /// regardless of where they came from.
@@ -30,9 +36,7 @@ pub struct Stage {
     pub name: &'static str,
     pub phase: Phase,
     pub required_features: MorphemeFeatures,
-    process: Box<
-        dyn Fn(Vec<Morpheme>, &dyn Lexicon) -> Vec<Morpheme> + Send + Sync,
-    >,
+    process: StageProcess,
 }
 
 impl Stage {

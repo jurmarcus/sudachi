@@ -112,7 +112,7 @@ pub fn apply(morphemes: Vec<Morpheme>, lexicon: &dyn Lexicon) -> Vec<Morpheme> {
         // で as Conjunction|Auxiliary not followed by も → reclassify as Particle.
         if matches!(w.pos, Pos::Conjunction | Pos::Auxiliary)
             && w.surface == "で"
-            && !next.is_some_and(|n| n.surface == "も")
+            && next.is_none_or(|n| n.surface != "も")
         {
             let mut de = w.clone();
             de.pos = Pos::Particle;

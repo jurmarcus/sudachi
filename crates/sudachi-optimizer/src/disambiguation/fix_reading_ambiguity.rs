@@ -119,12 +119,11 @@ pub fn apply(mut morphemes: Vec<Morpheme>, _lexicon: &dyn Lexicon) -> Vec<Morphe
         }
 
         // 寒気 → サムケ when が + する follows.
-        if surface == "寒気" && reading == "カンキ" && i + 2 < n {
-            if morphemes[i + 1].surface == "が" && morphemes[i + 2].dictionary_form == "する" {
+        if surface == "寒気" && reading == "カンキ" && i + 2 < n
+            && morphemes[i + 1].surface == "が" && morphemes[i + 2].dictionary_form == "する" {
                 morphemes[i].reading_form = "サムケ".to_string();
                 changed = true;
             }
-        }
 
         // 後 → アト when followed by Numeral / 数詞 sub-POS.
         if surface == "後" && reading == "ゴ" && i + 1 < n {

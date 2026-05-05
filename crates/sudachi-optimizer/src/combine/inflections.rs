@@ -312,13 +312,12 @@ pub fn apply(morphemes: Vec<Morpheme>, lexicon: &dyn Lexicon) -> Vec<Morpheme> {
                     let mut match_form: Option<&Form> = forms.iter().find(|f| {
                         f.text.ends_with(&suffix_dict) && f.text.len() > suffix_dict.len()
                     });
-                    if match_form.is_none() && matches!(next.pos, Pos::Suffix) {
-                        if let Some(verb_dict) = try_godan_dict_form(&suffix_dict) {
+                    if match_form.is_none() && matches!(next.pos, Pos::Suffix)
+                        && let Some(verb_dict) = try_godan_dict_form(&suffix_dict) {
                             match_form = forms.iter().find(|f| {
                                 f.text.ends_with(&verb_dict) && f.text.len() > verb_dict.len()
                             });
                         }
-                    }
                     scenario_b_match = match_form.map(|f| {
                         let last_tag = f.tags.last().cloned();
                         (f.text.clone(), last_tag)
@@ -346,8 +345,8 @@ pub fn apply(morphemes: Vec<Morpheme>, lexicon: &dyn Lexicon) -> Vec<Morpheme> {
                     // instead of falling through to a homophonous
                     // noun (幼/よう).
                 }
-            } else if let Some((form_text, last_tag)) = scenario_b_match {
-                if compound_lookup_ok_for_form(lexicon, &mut deconj_cache, &form_text) {
+            } else if let Some((form_text, last_tag)) = scenario_b_match
+                && compound_lookup_ok_for_form(lexicon, &mut deconj_cache, &form_text) {
                     merged = true;
                     current_pos = if last_tag.as_deref() == Some("adj-i") {
                         Pos::Adjective
@@ -356,7 +355,6 @@ pub fn apply(morphemes: Vec<Morpheme>, lexicon: &dyn Lexicon) -> Vec<Morpheme> {
                     };
                     new_dict_form = Some(form_text);
                 }
-            }
 
             if merged {
                 current.surface = candidate_text;

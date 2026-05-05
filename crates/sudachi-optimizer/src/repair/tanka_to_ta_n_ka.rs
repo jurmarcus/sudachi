@@ -59,12 +59,11 @@ pub fn apply(morphemes: Vec<Morpheme>, lexicon: &dyn Lexicon) -> Vec<Morpheme> {
             continue;
         }
         // Guard: preceded by を or の — real noun usage.
-        if let Some(prev_in_result) = result.last() {
-            if prev_in_result.surface == "を" || prev_in_result.surface == "の" {
+        if let Some(prev_in_result) = result.last()
+            && (prev_in_result.surface == "を" || prev_in_result.surface == "の") {
                 result.push(m.clone());
                 continue;
             }
-        }
 
         // Find the previous content morpheme (skip punctuation).
         let prev_idx = result

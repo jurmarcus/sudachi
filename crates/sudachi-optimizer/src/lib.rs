@@ -69,6 +69,17 @@
 //! docstring links back to its C# original so future audits can
 //! verify behaviour.
 
+// Upstream `sudachi::error::SudachiError` is a 136-byte enum that
+// drives the `clippy::result_large_err` lint on every wrapper that
+// returns `Result<_, SudachiError>`. Boxing it into
+// `Result<_, Box<SudachiError>>` would change the public API of
+// `load_dictionary` / `Optimizer::*` and ripple a `Box<...>` through
+// every caller across this workspace and jisho. The error is
+// constructed only on dictionary-load failures (rare path), so the
+// stack-bloat risk doesn't justify the API churn — silenced with
+// rationale here rather than each call site.
+#![allow(clippy::result_large_err)]
+
 pub mod data;
 pub mod lookup;
 pub mod pipeline;
