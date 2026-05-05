@@ -1162,3 +1162,20 @@ fn deconjugate_plain_non_past_negative_conditional_v5_s() {
 fn deconjugate_plain_non_past_colloquial_negative_conditional_v5_s() {
     assert_golden("壊さにゃ", "壊す", "v5s", "～colloquial negative conditional");
 }
+
+// ─── Verb-producing aux on renyou base (added 2026-05-06) ────────────
+
+#[test]
+fn deconjugate_aux_hajimeru_past_v5_s() {
+    assert_golden("話し始めた", "話す", "v5s", "～start V-ing→past");
+}
+
+#[test]
+fn deconjugate_aux_tsuzukeru_teiru_v5_s() {
+    assert_golden("話し続けている", "話す", "v5s", "～continue V-ing→teiru");
+}
+
+#[test]
+fn deconjugate_aux_te_morau_past_v5_s() {
+    assert_golden("話してもらった", "話す", "v5s", "～have someone do→past");
+}

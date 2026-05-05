@@ -1172,3 +1172,66 @@ fn deconjugate_plain_non_past_negative_conditional_v1() {
 fn deconjugate_plain_non_past_colloquial_negative_conditional_v1() {
     assert_golden("生きにゃ", "生きる", "v1", "～colloquial negative conditional");
 }
+
+// ─── Verb-producing aux on renyou base (added 2026-05-06) ────────────
+//
+// Six new rules for compound aux verbs that attach to a verb's masu-
+// stem (renyou) and produce another verb of the aux's own class.
+// Original goal: cover spans like 思い続けている, 食べ始めた, 走り出した
+// that the analyzer's enrich_morph couldn't resolve through the
+// per-surface morpheme_conjugations cache. With these rules the
+// deconjugator can walk surface → aux-stripped renyou → base verb in
+// one BFS pass.
+
+#[test]
+fn deconjugate_aux_hajimeru_past_v1() {
+    assert_golden("食べ始めた", "食べる", "v1", "～start V-ing→past");
+}
+
+#[test]
+fn deconjugate_aux_hajimeru_kana_past_v1() {
+    assert_golden("食べはじめた", "食べる", "v1", "～start V-ing→past");
+}
+
+#[test]
+fn deconjugate_aux_tsuzukeru_teiru_v1() {
+    assert_golden("食べ続けている", "食べる", "v1", "～continue V-ing→teiru");
+}
+
+#[test]
+fn deconjugate_aux_tsuzukeru_polite_v1() {
+    assert_golden("食べ続けます", "食べる", "v1", "～continue V-ing→polite");
+}
+
+#[test]
+fn deconjugate_aux_owaru_past_v1() {
+    assert_golden("食べ終わった", "食べる", "v1", "～finish V-ing→past");
+}
+
+#[test]
+fn deconjugate_aux_dasu_past_v1() {
+    assert_golden("食べ出した", "食べる", "v1", "～burst into V-ing→past");
+}
+
+#[test]
+fn deconjugate_aux_sugiru_past_v1() {
+    assert_golden("食べすぎた", "食べる", "v1", "～excess V-ing→past");
+}
+
+// ─── Te-aux do-for-me variants (separate from existing くれる "statement/request") ──
+
+#[test]
+fn deconjugate_aux_te_kureru_past_v1() {
+    // Two valid candidates: the existing くれる "statement/request"
+    // rule (uses stem-te-verbal, for V-てくれる as a discourse marker)
+    // and the new "do for me" rule (uses stem-te, for V-てくれる as
+    // the benefactive aux). matches_expected only requires the
+    // expected chain to be present in the output set; we lock in the
+    // benefactive one.
+    assert_golden("食べてくれた", "食べる", "v1", "～do for me→past");
+}
+
+#[test]
+fn deconjugate_aux_te_morau_past_v1() {
+    assert_golden("食べてもらった", "食べる", "v1", "～have someone do→past");
+}

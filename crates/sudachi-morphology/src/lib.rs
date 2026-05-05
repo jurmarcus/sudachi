@@ -70,7 +70,7 @@ pub use conjugation::{
     Axis, ChainStep, ChainedConjugation, Conjugation, Mood, Polarity, Politeness, Tense, Voice,
 };
 pub use copula::{conjugate_copula, conjugate_explanatory, CopulaForm};
-pub use deconjugate::{deconjugate, deconjugate_with, Form};
+pub use deconjugate::{deconjugate, deconjugate_to_lemma, deconjugate_with, Form};
 
 pub use tag::ConjForm;
 pub use verb::{Conjugated, Verb};

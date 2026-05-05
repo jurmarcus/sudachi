@@ -1675,6 +1675,68 @@
     "con_tag": [ "v1" ],
     "detail": "teiru"
   },
+
+  "── verb-producing aux on renyou (masu-stem) base — 始める / 続ける / 終わる / 出す / すぎる ──────────────────────",
+
+  {
+    "type": "stdrule",
+    "dec_end": [ "", "" ],
+    "con_end": [ "始める", "はじめる" ],
+    "dec_tag": [ "stem-ren", "stem-ren" ],
+    "con_tag": [ "v1", "v1" ],
+    "detail": "start V-ing"
+  },
+  {
+    "type": "stdrule",
+    "dec_end": [ "", "" ],
+    "con_end": [ "続ける", "つづける" ],
+    "dec_tag": [ "stem-ren", "stem-ren" ],
+    "con_tag": [ "v1", "v1" ],
+    "detail": "continue V-ing"
+  },
+  {
+    "type": "stdrule",
+    "dec_end": [ "", "" ],
+    "con_end": [ "終わる", "おわる" ],
+    "dec_tag": [ "stem-ren", "stem-ren" ],
+    "con_tag": [ "v5r", "v5r" ],
+    "detail": "finish V-ing"
+  },
+  {
+    "type": "stdrule",
+    "dec_end": [ "", "" ],
+    "con_end": [ "出す", "だす" ],
+    "dec_tag": [ "stem-ren", "stem-ren" ],
+    "con_tag": [ "v5s", "v5s" ],
+    "detail": "burst into V-ing"
+  },
+  {
+    "type": "stdrule",
+    "dec_end": [ "", "" ],
+    "con_end": [ "すぎる", "過ぎる" ],
+    "dec_tag": [ "stem-ren", "stem-ren" ],
+    "con_tag": [ "v1", "v1" ],
+    "detail": "excess V-ing"
+  },
+
+  "── te-aux: do-for-me variants (separate from existing 'statement/request') ────────────────────────────",
+
+  {
+    "type": "stdrule",
+    "dec_end": [ "" ],
+    "con_end": [ "くれる" ],
+    "dec_tag": [ "stem-te" ],
+    "con_tag": [ "v1-s" ],
+    "detail": "do for me"
+  },
+  {
+    "type": "stdrule",
+    "dec_end": [ "" ],
+    "con_end": [ "もらう" ],
+    "dec_tag": [ "stem-te" ],
+    "con_tag": [ "v5u" ],
+    "detail": "have someone do"
+  },
   {
     "type": "contextrule",
     "contextrule": "v1inftrap",

@@ -140,6 +140,37 @@ pub fn deconjugate_with_index(input: &str, rules: &[Rule], index: &RuleIndex) ->
         .collect()
 }
 
+/// Filter [`deconjugate`]'s output to forms whose `text` matches a
+/// known target lemma — the analyzer-side workflow when we have a
+/// vocab id (and therefore the dictionary form) and want to find the
+/// chain that connects the surface back to it.
+///
+/// `target_lemma` is matched against the form's `text` field. The
+/// returned vector is empty when no chain reaches the target.
+///
+/// **Iterative depth note**: the underlying [`deconjugate`] is already
+/// a BFS over the rule graph and walks every reachable form, so a
+/// single call is sufficient — no manual chaining required. The
+/// "cap depth at 3" requirement from the deferred plan is enforced
+/// by the BFS's own iteration cap (`MAX_ITERATIONS`) and rule-kind
+/// chain-position guards.
+///
+/// Example:
+/// ```ignore
+/// use sudachi_morphology::{deconjugate_to_lemma, Form};
+///
+/// let chains = deconjugate_to_lemma("食べ始めた", "食べる");
+/// // chains[0].process == ["past", "start V-ing", "(masu stem)"]
+/// // chains[0].text == "食べる"
+/// // chains[0].tags ends with "v1"
+/// ```
+pub fn deconjugate_to_lemma(surface: &str, target_lemma: &str) -> Vec<Form> {
+    deconjugate(surface)
+        .into_iter()
+        .filter(|f| f.text == target_lemma)
+        .collect()
+}
+
 /// Try to apply one rule to one form. Returns the new form if it
 /// matches, None otherwise.
 fn apply_rule(form: &Form, rule: &Rule) -> Option<Form> {
@@ -369,5 +400,59 @@ mod tests {
             f.tags.first().is_some_and(|t| t.starts_with("v") || t.starts_with("adj"))
         });
         assert!(!has_verb_candidate, "katakana noun produced verb candidates: {:?}", forms);
+    }
+
+    // ─── deconjugate_to_lemma ────────────────────────────────────────
+
+    #[test]
+    fn deconjugate_to_lemma_finds_aux_chain() {
+        // 食べ始めた deconjugates back to 食べる via:
+        //   past (た → る) → start V-ing (始める → "") → masu stem (… → 食べる)
+        // The filter narrows BFS output to the chain that actually
+        // lands on the requested lemma.
+        let chains = deconjugate_to_lemma("食べ始めた", "食べる");
+        assert!(
+            !chains.is_empty(),
+            "expected at least one chain landing on 食べる, got none. \
+             Full deconjugate output: {:?}",
+            deconjugate("食べ始めた"),
+        );
+        // Every returned chain reaches the target.
+        for c in &chains {
+            assert_eq!(c.text, "食べる");
+        }
+        // Process labels include the new aux rule.
+        let any_has_aux = chains
+            .iter()
+            .any(|c| c.process.iter().any(|p| p == "start V-ing"));
+        assert!(
+            any_has_aux,
+            "expected at least one chain containing 'start V-ing' aux step",
+        );
+    }
+
+    #[test]
+    fn deconjugate_to_lemma_empty_when_no_match() {
+        // 食べた → 食べる (correct lemma).
+        // Asking for 飲む as the target should yield nothing — the
+        // chain doesn't reach 飲む.
+        let chains = deconjugate_to_lemma("食べた", "飲む");
+        assert!(chains.is_empty(), "unexpected chains: {chains:?}");
+    }
+
+    #[test]
+    fn deconjugate_to_lemma_handles_kuru_compound() {
+        // The existing teiru rule + the new "burst into V-ing" 出す
+        // rule combine for surfaces like 走り出している. This locks
+        // the path in.
+        let chains = deconjugate_to_lemma("走り出している", "走る");
+        assert!(
+            !chains.is_empty(),
+            "expected at least one chain landing on 走る for 走り出している",
+        );
+        let any_has_dasu = chains
+            .iter()
+            .any(|c| c.process.iter().any(|p| p == "burst into V-ing"));
+        assert!(any_has_dasu, "expected 'burst into V-ing' aux step");
     }
 }
