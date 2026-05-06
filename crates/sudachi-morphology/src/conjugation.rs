@@ -445,105 +445,150 @@ pub struct AuxStep {
     pub conjugation: Conjugation,
 }
 
-/// A two-level conjugation request: a base [`Conjugation`] for the
-/// head verb, plus an optional [`AuxStep`] describing one auxiliary
-/// attached to it. Mirrors the deconjugator's `Form.process` shape
-/// in typed form — every chain that reaches a verb lemma decomposes
-/// into "base axes + optional aux + aux axes", at most.
+/// A multi-level conjugation request: a base [`Conjugation`] for
+/// the head verb, plus an ordered chain of [`AuxStep`] attachments
+/// stacked outermost-from-base. Mirrors the deconjugator's
+/// `Form.process` shape in typed form — every chain that reaches
+/// a verb lemma decomposes into "base axes + N aux levels + each
+/// aux's own axes".
+///
+/// Multi-level chains compose via te-form / renyou-stem stacking:
+///
+/// ```text
+/// 思い続けている  (思う v1)
+///   base = dict()
+///   aux  = [Tsuzukeru @ dict, Teiru @ dict]
+///                                   │
+///   forward = 思う → 思い続ける ─┘ → 思い続けて → 思い続けている
+///                  └ Tsuzukeru        ↓ te-form        └ Teiru
+/// ```
+///
+/// The `Vec` is ordered: `aux[0]` attaches to the base verb's stem,
+/// `aux[1]` to the te-form / renyou stem of the `aux[0]` compound,
+/// etc. Empty Vec = no aux (the [`Verb::conjugate_axes`] fast path).
 ///
 /// `From<Conjugation>` and `Default` cover the no-aux fast path:
-/// `ChainSpec::from(c)` is `ChainSpec { base: c, aux: None }`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// `ChainSpec::from(c)` is `ChainSpec { base: c, aux: vec![] }`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ChainSpec {
-    /// Conjugation applied to the head verb BEFORE the aux attaches.
-    /// Almost always [`Conjugation::dictionary`] — most aux attach
-    /// straight off the lemma's stem. Non-default values are for
-    /// rare cases like causative + aux composition.
+    /// Conjugation applied to the head verb BEFORE any aux attaches.
+    /// Usually [`Conjugation::dictionary`] — most aux attach straight
+    /// off the lemma's stem. Non-default values handle base-side
+    /// transforms like causative (`食べさせてもらう` = base.voice =
+    /// Causative + aux[0] = Temorau).
     pub base: Conjugation,
-    /// Optional aux attachment. `None` = direct conjugation, identical
-    /// to [`Verb::conjugate_axes`] applied to `self.base`.
-    pub aux: Option<AuxStep>,
+    /// Ordered aux stack, outermost-from-base. `aux[i]` attaches to
+    /// the te-form or renyou stem of `aux[i-1]`'s compound surface
+    /// (or the base verb's stem when `i == 0`).
+    ///
+    /// Empty Vec for direct conjugation (no aux).
+    pub aux: Vec<AuxStep>,
 }
 
 impl From<Conjugation> for ChainSpec {
     fn from(base: Conjugation) -> Self {
-        Self { base, aux: None }
+        Self {
+            base,
+            aux: Vec::new(),
+        }
     }
 }
 
 impl ChainSpec {
     /// Build a [`ChainSpec`] from a deconjugator [`crate::Form`]'s
-    /// `process` chain, splitting at the first aux marker. Mirrors
-    /// [`Conjugation::from_process`]'s strict semantics: returns
-    /// `None` if any non-aux, non-stem label is unrecognised.
+    /// `process` chain, splitting at every aux marker into
+    /// successive levels.
     ///
     /// Walking algorithm:
-    /// 1. Reverse `process` so we walk forward (deconjugator order is
-    ///    backwards).
-    /// 2. Skip stem-marker intermediates (`(masu stem)`, `(te)`, etc.).
-    /// 3. Apply axis labels to whichever side is currently active
-    ///    (base before aux, aux after).
-    /// 4. On encountering an aux marker (`start V-ing`, `teiru`, ...)
-    ///    promote: subsequent labels go to `aux.conjugation`.
+    /// 1. Reverse `process` so we walk forward (deconjugator order
+    ///    is backwards).
+    /// 2. On an aux marker (`teiru` / `start V-ing` / etc.) push a
+    ///    fresh [`AuxStep`] onto `aux`. Subsequent axis labels apply
+    ///    to that aux's conjugation, NOT the base.
+    /// 3. **Structural-(te) skip**: when `(te)` or `te` appears
+    ///    immediately before a te-stacking aux marker, the (te) is
+    ///    structural — it's how the next aux attaches to the previous
+    ///    compound, not a Mood::Te axis. Skip it.
+    /// 4. Apply axis labels via [`apply_process_label`] to the most
+    ///    recent aux's conjugation (or the base if `aux` is empty).
+    /// 5. Stem markers (`(masu stem)`, `(stem)`, etc.) are no-ops —
+    ///    handled inside `apply_process_label`.
+    ///
+    /// Returns `None` when any non-aux, non-stem label fails to
+    /// axis-decompose (compound predicates the deconjugator emits
+    /// from rules outside the canonical 5-axis grammar).
     pub fn from_process(process: &[String]) -> Option<Self> {
         let mut spec = ChainSpec::default();
-        let mut aux_kind: Option<AuxKind> = None;
-        let mut aux_conj = Conjugation::dictionary();
-        for label in process.iter().rev() {
+        let labels: Vec<&str> = process.iter().rev().map(String::as_str).collect();
+        let mut i = 0;
+        while i < labels.len() {
+            let label = labels[i];
+
+            // Aux marker — start a new aux level.
             if let Some(kind) = AuxKind::from_process_label(label) {
-                if aux_kind.is_some() {
-                    // Multi-level aux — out of scope. Caller can fall
-                    // back to from_process_lenient or treat as opaque.
-                    return None;
-                }
-                aux_kind = Some(kind);
+                spec.aux.push(AuxStep {
+                    kind,
+                    conjugation: Conjugation::dictionary(),
+                });
+                i += 1;
                 continue;
             }
-            // Route the axis label to the active side.
-            let target = match aux_kind {
-                Some(_) => &mut aux_conj,
+
+            // Structural (te) before a te-stacking aux: skip — this
+            // is the connector that lets the next aux attach to the
+            // previous compound, not a Mood::Te axis on the current
+            // level.
+            if (label == "(te)" || label == "te")
+                && i + 1 < labels.len()
+                && AuxKind::from_process_label(labels[i + 1])
+                    .is_some_and(|k| k.attaches_to_te())
+            {
+                i += 1;
+                continue;
+            }
+
+            // Otherwise: axis label routed to the active side.
+            let target = match spec.aux.last_mut() {
+                Some(last) => &mut last.conjugation,
                 None => &mut spec.base,
             };
             apply_process_label(target, label)?;
-        }
-        if let Some(kind) = aux_kind {
-            spec.aux = Some(AuxStep {
-                kind,
-                conjugation: aux_conj,
-            });
+            i += 1;
         }
         Some(spec)
     }
 
-    /// Lenient variant — partial aux split that ignores unknown labels
-    /// rather than short-circuiting. Mirrors
+    /// Lenient variant — partial aux split that ignores unknown
+    /// labels rather than short-circuiting. Mirrors
     /// [`Conjugation::from_process_lenient`].
     pub fn from_process_lenient(process: &[String]) -> Self {
         let mut spec = ChainSpec::default();
-        let mut aux_kind: Option<AuxKind> = None;
-        let mut aux_conj = Conjugation::dictionary();
-        for label in process.iter().rev() {
+        let labels: Vec<&str> = process.iter().rev().map(String::as_str).collect();
+        let mut i = 0;
+        while i < labels.len() {
+            let label = labels[i];
             if let Some(kind) = AuxKind::from_process_label(label) {
-                if aux_kind.is_some() {
-                    // Second aux marker in a lenient pass: keep the
-                    // first, ignore the second. Multi-level aux is a
-                    // future extension.
-                    continue;
-                }
-                aux_kind = Some(kind);
+                spec.aux.push(AuxStep {
+                    kind,
+                    conjugation: Conjugation::dictionary(),
+                });
+                i += 1;
                 continue;
             }
-            let target = match aux_kind {
-                Some(_) => &mut aux_conj,
+            if (label == "(te)" || label == "te")
+                && i + 1 < labels.len()
+                && AuxKind::from_process_label(labels[i + 1])
+                    .is_some_and(|k| k.attaches_to_te())
+            {
+                i += 1;
+                continue;
+            }
+            let target = match spec.aux.last_mut() {
+                Some(last) => &mut last.conjugation,
                 None => &mut spec.base,
             };
             let _ = apply_process_label(target, label);
-        }
-        if let Some(kind) = aux_kind {
-            spec.aux = Some(AuxStep {
-                kind,
-                conjugation: aux_conj,
-            });
+            i += 1;
         }
         spec
     }
@@ -706,82 +751,93 @@ impl Verb {
         })
     }
 
-    /// Apply a [`ChainSpec`] — a base [`Conjugation`] possibly followed
-    /// by an [`AuxStep`] — to this verb. Returns the final surface and
-    /// the per-step chain, including a bridge `Axis::Aux(kind)` step
-    /// at the boundary.
+    /// Apply a [`ChainSpec`] — a base [`Conjugation`] followed by zero
+    /// or more [`AuxStep`] attachments — to this verb. Returns the
+    /// final surface and the per-step chain, with a bridge
+    /// `Axis::Aux(kind)` step at every aux boundary.
     ///
-    /// Single-level aux only. Multi-level (`食べさせてもらう`) is
-    /// explicitly out of scope per the continuation plan.
+    /// Multi-level: each aux in `spec.aux` stacks on the previous
+    /// compound. `aux[0]` attaches to this verb's te-form or renyou
+    /// stem; `aux[1]` attaches to `aux[0]`'s compound's te-form / renyou
+    /// stem; and so on. The returned chain is ordered base → bridge
+    /// → aux[0] axes → bridge → aux[1] axes → ... → final tense.
     ///
-    /// Algorithm:
-    ///   1. Apply `spec.base` to `self` via [`Self::conjugate_axes`].
-    ///      Captures any base-side conjugation (rare — usually empty).
-    ///   2. If `spec.aux` is `None`, return early — same result as a
-    ///      bare `conjugate_axes` call.
-    ///   3. Compose the compound stem: `<base_stem>` + `<aux.lemma>`,
-    ///      where the stem is `te_form()` for te-stacking aux and
-    ///      `stem_renyou()` for renyou-stacking aux.
-    ///   4. Construct a fresh [`Verb`] with the compound surface +
-    ///      `aux.kind.verb_class()` and call `conjugate_axes(aux.conjugation)`
-    ///      to get the inner aux chain.
-    ///   5. Splice: base chain + bridge `Axis::Aux(kind)` step + aux chain.
-    pub fn conjugate_chain(&self, spec: ChainSpec) -> Option<ChainedConjugation> {
-        // Stage 1: base verb conjugation.
-        let base_result = self.conjugate_axes(spec.base)?;
-        let Some(aux) = spec.aux else {
-            return Some(base_result);
-        };
-
-        // Stage 2: build the compound stem.
-        //
-        // For te-stacking aux we need the verb's te-form including
-        // the connecting て/で suffix; the aux's `.lemma()` (`いる`,
-        // `しまう`, `くれる`, ...) attaches directly to that.
-        //
-        // For renyou-stacking aux we need the verb's masu-stem (no
-        // connector — 始める / 続ける / 出す / 終わる / すぎる all
-        // attach directly to the renyou stem).
-        let stem_surface: String = if aux.kind.attaches_to_te() {
-            self.te_form().surface
+    /// Algorithm per level:
+    /// 1. Stage 1 (once): apply `spec.base` to `self` via
+    ///    [`Self::conjugate_axes`]. Captures rare base-side axes
+    ///    like Voice::Causative for `食べさせてもらう`.
+    /// 2. For each aux in order:
+    ///    - Compute the stem of the current working surface
+    ///      (te-form or renyou) under the working class.
+    ///    - Concat stem + aux.lemma to form the compound surface.
+    ///    - Fresh Verb with the compound surface + aux.kind.verb_class().
+    ///    - Run `conjugate_axes(aux.conjugation)` for the aux
+    ///      chain (Politeness, Tense, etc. on the aux verb).
+    ///    - Splice: working chain + bridge `Axis::Aux(kind)` +
+    ///      aux chain. Update the working class for the next
+    ///      level's stem computation.
+    pub fn conjugate_chain(&self, spec: &ChainSpec) -> Option<ChainedConjugation> {
+        // Stage 1: base verb conjugation. With no aux this is the
+        // fast path — same result as `conjugate_axes(spec.base)`. With
+        // aux present, captures any base-side voice transform (e.g.
+        // `食べさせてもらう` = `Voice::Causative` on base, then
+        // Temorau aux on the causative compound).
+        let mut working = self.conjugate_axes(spec.base)?;
+        // Track the verb class of the current working compound. After
+        // a voice transform on the base, the resulting class changes
+        // (Causative → Ichidan, CausativeShort → GodanSu, etc.).
+        let mut working_class = if spec.base.voice == Voice::None {
+            self.class
         } else {
-            self.stem_renyou()
+            voice_to_resulting_class(spec.base.voice)
         };
-        if stem_surface.is_empty() {
-            return None;
+
+        for aux in &spec.aux {
+            // Build the stem from the current working surface +
+            // class. Each aux level treats `working.surface` as a
+            // dictionary-form input (each aux conjugation typically
+            // defaults to dict in multi-level chains); te-stacking
+            // aux take the te-form, renyou-stacking aux take the
+            // masu-stem.
+            let stem_verb = Verb::new(&working.surface, working_class);
+            let stem_surface = if aux.kind.attaches_to_te() {
+                stem_verb.te_form().surface
+            } else {
+                stem_verb.stem_renyou()
+            };
+            if stem_surface.is_empty() {
+                return None;
+            }
+            let compound_surface = format!("{}{}", stem_surface, aux.kind.lemma());
+            let compound_verb = Verb::new(&compound_surface, aux.kind.verb_class());
+            let aux_result = compound_verb.conjugate_axes(aux.conjugation)?;
+
+            // Splice: working chain + bridge Aux step + aux chain.
+            let mut chain = working.chain;
+            chain.push(ChainStep {
+                axis: Axis::Aux(aux.kind),
+                surface: compound_surface.clone(),
+                formal: false,
+            });
+            chain.extend(aux_result.chain);
+
+            let final_surface = chain
+                .last()
+                .map(|s| s.surface.clone())
+                .unwrap_or(compound_surface);
+            working = ChainedConjugation {
+                surface: final_surface,
+                // Preserve the original base conjugation as the
+                // "headline" record. Each aux's own conjugation is
+                // captured in the chain steps; reconstructing it is
+                // a render-time concern.
+                conjugation: spec.base,
+                chain,
+            };
+            working_class = aux.kind.verb_class();
         }
-        let compound_surface = format!("{}{}", stem_surface, aux.kind.lemma());
-        let compound_verb = Verb::new(compound_surface.clone(), aux.kind.verb_class());
 
-        // Stage 3: conjugate the compound through the aux's paradigm.
-        let aux_result = compound_verb.conjugate_axes(aux.conjugation)?;
-
-        // Stage 4: splice. The base chain captures pre-aux axes (rare,
-        // usually empty); we then emit the bridge `Axis::Aux(kind)`
-        // step with the compound dictionary surface, then append every
-        // step of the aux's own conjugation.
-        let mut chain: Vec<ChainStep> = base_result.chain;
-        chain.push(ChainStep {
-            axis: Axis::Aux(aux.kind),
-            surface: compound_surface.clone(),
-            formal: false,
-        });
-        for step in aux_result.chain {
-            chain.push(step);
-        }
-
-        let final_surface = chain
-            .last()
-            .map(|s| s.surface.clone())
-            .unwrap_or(compound_surface);
-        // The "conjugation" we record is the BASE conjugation (the one
-        // applied to the head verb). The aux conjugation lives in the
-        // chain steps; reconstructing it is a render-time concern.
-        Some(ChainedConjugation {
-            surface: final_surface,
-            conjugation: spec.base,
-            chain,
-        })
+        Some(working)
     }
 }
 
@@ -1651,14 +1707,14 @@ mod tests {
                 );
             });
         let v = Verb::new(lemma, lemma_class);
-        let result = v.conjugate_chain(chain_spec).unwrap_or_else(|| {
+        let result = v.conjugate_chain(&chain_spec).unwrap_or_else(|| {
             panic!("conjugate_chain returned None for {surface:?} → {lemma:?}")
         });
         assert_eq!(
             result.surface, surface,
             "round-trip surface mismatch for {surface:?} → {lemma:?} \
-             (got {:?}, chain spec {:?})",
-            result.surface, chain_spec,
+             (got {:?}, chain spec {chain_spec:?})",
+            result.surface,
         );
     }
 
@@ -1669,27 +1725,9 @@ mod tests {
 
     #[test]
     fn chain_round_trip_taberu_tsuzuketeiru() {
-        // Multi-aux (続ける + ている) — first aux is Tsuzukeru on
-        // renyou, then teiru on the te-form of 続ける. ChainSpec is
-        // single-level, so this should fail strict from_process.
-        let chains = crate::deconjugate_to_lemma("食べ続けている", "食べる");
-        let strict_decomposes = chains
-            .iter()
-            .any(|f| ChainSpec::from_process(&f.process).is_some());
-        // Lenient should still produce a partial spec.
-        let lenient_count = chains
-            .iter()
-            .map(|f| ChainSpec::from_process_lenient(&f.process))
-            .filter(|s| s.aux.is_some())
-            .count();
-        assert!(
-            !strict_decomposes,
-            "multi-level aux chain should NOT strict-decompose (single-level only)",
-        );
-        assert!(
-            lenient_count > 0,
-            "lenient pass should still extract one aux step",
-        );
+        // Multi-level: Tsuzukeru on renyou, then Teiru on te-form of
+        // 続ける. ChainSpec is now Vec<AuxStep> so this round-trips.
+        assert_aux_round_trip("食べ続けている", "食べる", VerbClass::Ichidan);
     }
 
     #[test]
@@ -1713,11 +1751,24 @@ mod tests {
     }
 
     #[test]
+    fn chain_round_trip_omoi_tsuzuketeiru() {
+        // Two-level multi-aux: Tsuzukeru + Teiru on a v5u verb.
+        assert_aux_round_trip("思い続けている", "思う", VerbClass::GodanU);
+    }
+
+    #[test]
+    fn chain_round_trip_taberu_tsuzuketeita_with_past() {
+        // Three-level depth: Tsuzukeru + Teiru + Past — the past
+        // applies to the OUTER aux's conjugation, not base.
+        assert_aux_round_trip("食べ続けていた", "食べる", VerbClass::Ichidan);
+    }
+
+    #[test]
     fn chain_spec_from_process_routes_axes_to_aux() {
         // 食べ始めた process (deconjugator order, reversed during walk):
         //   ["past", "start V-ing", "(masu stem)"]
         // After reverse for forward: "(masu stem)" → "start V-ing" → "past"
-        // Stem skipped, aux marker promotes, then "past" goes to aux.
+        // Stem skipped, aux marker promotes, then "past" goes to aux[0].
         let process = vec![
             "past".to_string(),
             "start V-ing".to_string(),
@@ -1725,7 +1776,8 @@ mod tests {
         ];
         let spec = ChainSpec::from_process(&process).expect("strict decompose");
         assert_eq!(spec.base, Conjugation::dictionary());
-        let aux = spec.aux.expect("aux step");
+        assert_eq!(spec.aux.len(), 1);
+        let aux = &spec.aux[0];
         assert_eq!(aux.kind, AuxKind::Hajimeru);
         assert_eq!(aux.conjugation.tense, Tense::Past);
         assert_eq!(aux.conjugation.polarity, Polarity::Affirmative);
@@ -1736,9 +1788,40 @@ mod tests {
         // Plain past without aux should produce no aux side.
         let process = vec!["past".to_string(), "polite".to_string()];
         let spec = ChainSpec::from_process(&process).expect("strict decompose");
-        assert!(spec.aux.is_none());
+        assert!(spec.aux.is_empty());
         assert_eq!(spec.base.tense, Tense::Past);
         assert_eq!(spec.base.politeness, Politeness::Polite);
+    }
+
+    #[test]
+    fn chain_spec_from_process_skips_structural_te_before_te_aux() {
+        // 食べ続けている process (deconjugator order):
+        //   ["teiru", "(te)", "continue V-ing", "(masu stem)"]
+        // Forward: "(masu stem)" → "continue V-ing" → "(te)" → "teiru"
+        // The "(te)" sits between two aux markers; the second one
+        // (Teiru) attaches_to_te so the (te) is structural — should
+        // be skipped, NOT applied as Mood::Te on aux[0].
+        let process = vec![
+            "teiru".to_string(),
+            "(te)".to_string(),
+            "continue V-ing".to_string(),
+            "(masu stem)".to_string(),
+        ];
+        let spec = ChainSpec::from_process(&process).expect("strict decompose");
+        assert_eq!(spec.aux.len(), 2, "two aux levels expected");
+        assert_eq!(spec.aux[0].kind, AuxKind::Tsuzukeru);
+        assert_eq!(spec.aux[0].conjugation, Conjugation::dictionary());
+        assert_eq!(spec.aux[1].kind, AuxKind::Teiru);
+        assert_eq!(spec.aux[1].conjugation, Conjugation::dictionary());
+    }
+
+    #[test]
+    fn chain_spec_from_process_keeps_terminal_te_as_mood() {
+        // Bare 食べて (no following aux) — the (te) IS Mood::Te.
+        let process = vec!["(te)".to_string()];
+        let spec = ChainSpec::from_process(&process).expect("strict decompose");
+        assert!(spec.aux.is_empty());
+        assert_eq!(spec.base.mood, Mood::Te);
     }
 
     #[test]
