@@ -455,4 +455,53 @@ mod tests {
             .any(|c| c.process.iter().any(|p| p == "burst into V-ing"));
         assert!(any_has_dasu, "expected 'burst into V-ing' aux step");
     }
+
+    #[test]
+    fn deconjugate_to_lemma_reaches_through_polite_request() {
+        // Pre-2026-05-06 the "polite request" rule was OnlyFinal,
+        // locking the chain at the te-form (書いて, 食べて) and
+        // refusing to extend back to the verb's lemma. Changing it
+        // to a stdrule + adding the kanji 下さい alternative lets
+        // the BFS continue all the way back. Lock that in.
+        for (surface, lemma) in [
+            ("書いて下さい", "書く"),
+            ("書いてください", "書く"),
+            ("食べてください", "食べる"),
+        ] {
+            let chains = deconjugate_to_lemma(surface, lemma);
+            assert!(
+                !chains.is_empty(),
+                "{surface} should now reach {lemma} via polite-request rule",
+            );
+            let has_polite_request = chains
+                .iter()
+                .any(|c| c.process.iter().any(|p| p == "polite request"));
+            assert!(has_polite_request, "{surface}: expected 'polite request' step");
+        }
+    }
+
+    #[test]
+    fn deconjugate_to_lemma_reaches_through_yasui_nikui() {
+        // i-adj-producing aux on renyou stem. Forward-side
+        // conjugate_chain doesn't yet handle these (needs
+        // IAdjective::conjugate_axes — deferred), but the
+        // deconjugator-side rule still helps: it lets `deconjugate`
+        // queries find the lemma for surfaces like 食べやすい /
+        // 食べにくい.
+        for (surface, lemma, label) in [
+            ("食べやすい", "食べる", "easy V-ing"),
+            ("食べにくい", "食べる", "hard V-ing"),
+            ("読みやすい", "読む", "easy V-ing"),
+        ] {
+            let chains = deconjugate_to_lemma(surface, lemma);
+            assert!(
+                !chains.is_empty(),
+                "{surface} should reach {lemma}",
+            );
+            let has_label = chains
+                .iter()
+                .any(|c| c.process.iter().any(|p| p == label));
+            assert!(has_label, "{surface}: expected {label:?} step");
+        }
+    }
 }

@@ -327,6 +327,18 @@ pub enum AuxKind {
     Owaru,
     /// 〜出す — sudden inception ("burst into V-ing").
     Dasu,
+
+    // i-adj-producing aux (Yasui, Nikui, NaruI, SuruI, …) intentionally
+    // omitted. Their forward path needs `IAdjective::conjugate_axes`
+    // (a 5-axis enumerator over i-adj forms) which doesn't exist yet
+    // — the deferred plan flags it as "Out (defer to follow-up)".
+    // The deconjugator-side rules for `やすい` / `にくい` exist (see
+    // `data/deconjugation_rules.json`) so surfaces like 食べやすい
+    // deconjugate cleanly to a lemma; ChainSpec::from_process will
+    // fail strict (unrecognised process labels) and morph_resolution
+    // _from_token falls back to no chain — better than rendering a
+    // broken chain that doesn't round-trip on the past form
+    // (食べやすかった).
 }
 
 impl AuxKind {

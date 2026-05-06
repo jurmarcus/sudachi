@@ -1652,12 +1652,31 @@
     "detail": "ksb"
   },
   {
-    "type": "onlyfinalrule",
-    "dec_end": [ "" ],
-    "con_end": [ "ください" ],
-    "dec_tag": [ "stem-te" ],
-    "con_tag": [ "adj-i" ],
+    "type": "stdrule",
+    "dec_end": [ "", "" ],
+    "con_end": [ "ください", "下さい" ],
+    "dec_tag": [ "stem-te", "stem-te" ],
+    "con_tag": [ "adj-i", "adj-i" ],
     "detail": "polite request"
+  },
+
+  "── i-adj-producing aux on renyou base — やすい / にくい (added 2026-05-06) ──",
+
+  {
+    "type": "stdrule",
+    "dec_end": [ "" ],
+    "con_end": [ "やすい" ],
+    "dec_tag": [ "stem-ren" ],
+    "con_tag": [ "adj-i" ],
+    "detail": "easy V-ing"
+  },
+  {
+    "type": "stdrule",
+    "dec_end": [ "" ],
+    "con_end": [ "にくい" ],
+    "dec_tag": [ "stem-ren" ],
+    "con_tag": [ "adj-i" ],
+    "detail": "hard V-ing"
   },
   {
     "type": "stdrule",
