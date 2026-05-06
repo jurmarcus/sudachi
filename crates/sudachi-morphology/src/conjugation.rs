@@ -328,25 +328,47 @@ pub enum AuxKind {
     /// 〜出す — sudden inception ("burst into V-ing").
     Dasu,
 
-    // i-adj-producing aux (Yasui, Nikui, NaruI, SuruI, …) intentionally
-    // omitted. Their forward path needs `IAdjective::conjugate_axes`
-    // (a 5-axis enumerator over i-adj forms) which doesn't exist yet
-    // — the deferred plan flags it as "Out (defer to follow-up)".
+    // ── Terminal aux ───────────────────────────────────────────────
+    /// 〜てください — polite imperative ("please do").
+    ///
+    /// Special: this aux is **terminal** — its compound (e.g. 書いて
+    /// ください) doesn't further inflect along the 5-axis grid. The
+    /// imperative is itself the only realisable form (it's not 過去
+    /// 「書いてくださった」 etc., that's a different aux —
+    /// Kudasaru). [`Verb::conjugate_chain`] short-circuits when it
+    /// sees a terminal aux: append `lemma()` after the te-base and
+    /// emit a single bridge step, skip [`IAdjective::conjugate_axes`]
+    /// entirely.
+    ///
+    /// Kanji variant `下さい` (more common in real text — 1344 vs 584
+    /// kana spans in the Anki corpus) is handled at the
+    /// [`crate::deconjugate`] rule corpus side (parallel `con_end`
+    /// arrays) and at the round-trip retry in jisho-core's
+    /// `morph_resolution_from_token`. The forward conjugator emits
+    /// canonical kana ください.
+    Kudasai,
+    // i-adj-producing aux (Yasui, Nikui, NaruI, SuruI, Tai) still
+    // intentionally omitted. Their forward path needs full
+    // `IAdjective::conjugate_axes` because their compounds DO inflect
+    // (食べやすかった, 食べやすくない). Filed as a follow-up to the
+    // i-adj 5-axis refactor.
+    //
     // The deconjugator-side rules for `やすい` / `にくい` exist (see
     // `data/deconjugation_rules.json`) so surfaces like 食べやすい
-    // deconjugate cleanly to a lemma; ChainSpec::from_process will
-    // fail strict (unrecognised process labels) and morph_resolution
-    // _from_token falls back to no chain — better than rendering a
-    // broken chain that doesn't round-trip on the past form
-    // (食べやすかった).
+    // deconjugate cleanly to a lemma; ChainSpec::from_process still
+    // fails strict on those labels until the i-adj refactor lands.
 }
 
 impl AuxKind {
     /// The verb class of the aux itself, used to drive forward
     /// conjugation of `<base>.stem + aux.lemma()` through the right
     /// paradigm via [`Verb::conjugate_axes`].
-    pub fn verb_class(self) -> VerbClass {
-        match self {
+    ///
+    /// Returns `None` for *terminal* aux ([`Self::is_terminal`]) — those
+    /// don't drive a Verb-class conjugation; their compound is the
+    /// final surface as-is.
+    pub fn verb_class(self) -> Option<VerbClass> {
+        Some(match self {
             Self::Teiru => VerbClass::Ichidan,
             Self::Teoru => VerbClass::GodanRu,
             Self::Teiku => VerbClass::GodanKuIku,
@@ -363,7 +385,8 @@ impl AuxKind {
             Self::Tsuzukeru => VerbClass::Ichidan,
             Self::Owaru => VerbClass::GodanRu,
             Self::Dasu => VerbClass::GodanSu,
-        }
+            Self::Kudasai => return None,
+        })
     }
 
     /// Default kanji-form lemma — the surface that appears after the
@@ -387,6 +410,7 @@ impl AuxKind {
             Self::Tsuzukeru => "続ける",
             Self::Owaru => "終わる",
             Self::Dasu => "出す",
+            Self::Kudasai => "ください",
         }
     }
 
@@ -406,7 +430,20 @@ impl AuxKind {
                 | Self::Teageru
                 | Self::Temorau
                 | Self::Teshimau
+                | Self::Kudasai
         )
+    }
+
+    /// Whether this aux is *terminal* — its compound surface is the
+    /// final form, not a Verb / IAdjective that further inflects.
+    ///
+    /// For terminal aux, [`Verb::conjugate_chain`] short-circuits the
+    /// per-aux `conjugate_axes` step: the compound itself becomes the
+    /// last chain step, no further axis decomposition. Today this is
+    /// only [`Self::Kudasai`] (the polite imperative
+    /// `〜てください` / `〜て下さい`).
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Kudasai)
     }
 
     /// Map a deconjugator process label to an [`AuxKind`], if the
@@ -434,6 +471,7 @@ impl AuxKind {
             "do for someone" => Self::Teageru,
             "have someone do" => Self::Temorau,
             "finish/completely/end up" => Self::Teshimau,
+            "polite request" => Self::Kudasai,
             // Renyou-stacking
             "excess V-ing" => Self::Sugiru,
             "start V-ing" => Self::Hajimeru,
@@ -821,7 +859,33 @@ impl Verb {
                 return None;
             }
             let compound_surface = format!("{}{}", stem_surface, aux.kind.lemma());
-            let compound_verb = Verb::new(&compound_surface, aux.kind.verb_class());
+
+            // Terminal aux short-circuit: no further inflection. The
+            // compound surface IS the final form (e.g. Kudasai →
+            // 書いてください). Emit a single bridge step and stop —
+            // ignore aux.conjugation (it must be Dictionary or the
+            // chain wouldn't have decomposed cleanly anyway).
+            if aux.kind.is_terminal() {
+                let mut chain = working.chain;
+                chain.push(ChainStep {
+                    axis: Axis::Aux(aux.kind),
+                    surface: compound_surface.clone(),
+                    formal: false,
+                });
+                working = ChainedConjugation {
+                    surface: compound_surface,
+                    conjugation: spec.base,
+                    chain,
+                };
+                // Terminal aux must be the last in the chain — no
+                // further aux can stack on a terminal compound. Break
+                // (defensive: data shouldn't produce another aux after
+                // a terminal one anyway).
+                break;
+            }
+
+            let class = aux.kind.verb_class()?;
+            let compound_verb = Verb::new(&compound_surface, class);
             let aux_result = compound_verb.conjugate_axes(aux.conjugation)?;
 
             // Splice: working chain + bridge Aux step + aux chain.
@@ -846,7 +910,7 @@ impl Verb {
                 conjugation: spec.base,
                 chain,
             };
-            working_class = aux.kind.verb_class();
+            working_class = class;
         }
 
         Some(working)
@@ -1760,6 +1824,36 @@ mod tests {
     #[test]
     fn chain_round_trip_hashiru_dashita() {
         assert_aux_round_trip("走り出した", "走る", VerbClass::GodanRu);
+    }
+
+    #[test]
+    fn chain_round_trip_kaku_kudasai_kana() {
+        // Terminal aux: te-form + ください. The deconjugator emits
+        // ["polite request", "(te)", "(unstressed infinitive)"], which
+        // ChainSpec::from_process maps to a single Kudasai aux. The
+        // forward chain must produce 書いてください exactly.
+        use crate::deconjugate_to_lemma;
+        let chains = deconjugate_to_lemma("書いてください", "書く");
+        let form = chains
+            .iter()
+            .find(|f| {
+                f.process
+                    .iter()
+                    .any(|p| p == "polite request")
+            })
+            .expect("chain with 'polite request' label");
+        let spec = ChainSpec::from_process(&form.process)
+            .expect("polite request should now decompose strict");
+        assert_eq!(spec.aux.len(), 1);
+        assert_eq!(spec.aux[0].kind, AuxKind::Kudasai);
+        let v = Verb::new("書く", VerbClass::GodanKu);
+        let forward = v.conjugate_chain(&spec).expect("forward chain");
+        assert_eq!(forward.surface, "書いてください");
+        // The chain ends with the Aux(Kudasai) bridge step (no axes
+        // applied to the imperative compound).
+        let last = forward.chain.last().unwrap();
+        assert_eq!(last.axis, Axis::Aux(AuxKind::Kudasai));
+        assert_eq!(last.surface, "書いてください");
     }
 
     #[test]
