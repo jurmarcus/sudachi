@@ -59,6 +59,7 @@
 //! - `Mood::VolitionalNegative` + `Polarity::Negative` — まい is already negative.
 //! - `Mood::Imperative` + `Polarity::Negative` — use `Mood::ImperativeNegative` instead.
 
+use crate::adjective::IAdjective;
 use crate::tag::ConjForm;
 use crate::verb::Verb;
 use crate::verb_class::VerbClass;
@@ -347,16 +348,23 @@ pub enum AuxKind {
     /// `morph_resolution_from_token`. The forward conjugator emits
     /// canonical kana ください.
     Kudasai,
-    // i-adj-producing aux (Yasui, Nikui, NaruI, SuruI, Tai) still
-    // intentionally omitted. Their forward path needs full
-    // `IAdjective::conjugate_axes` because their compounds DO inflect
-    // (食べやすかった, 食べやすくない). Filed as a follow-up to the
-    // i-adj 5-axis refactor.
-    //
-    // The deconjugator-side rules for `やすい` / `にくい` exist (see
-    // `data/deconjugation_rules.json`) so surfaces like 食べやすい
-    // deconjugate cleanly to a lemma; ChainSpec::from_process still
-    // fails strict on those labels until the i-adj refactor lands.
+
+    // ── I-adj-producing aux (renyou-attaching) ─────────────────────
+    /// 〜やすい — "easy to V" (e.g. 食べやすい). Renyou-attaching;
+    /// produces an i-adjective that can further inflect
+    /// (食べやすかった, 食べやすくない, 食べやすくて).
+    /// Forward path uses [`IAdjective::conjugate_axes`].
+    Yasui,
+    /// 〜にくい — "hard to V" (e.g. 食べにくい). Same shape as
+    /// [`Self::Yasui`].
+    Nikui,
+    // Tai is intentionally NOT here — `たい` is treated as
+    // [`Mood::Desiderative`] on the BASE verb's [`Conjugation`]
+    // record, not as a separate aux level. That preserves the existing
+    // round-trip test corpus (`食べたい` → base.mood = Desiderative,
+    // chain has a single Mood step). Promoting Tai to AuxKind would
+    // double-handle it. NaruI / SuruI / itai etc. similarly stay out
+    // until a corpus-frequency case demands them.
 }
 
 impl AuxKind {
@@ -385,7 +393,11 @@ impl AuxKind {
             Self::Tsuzukeru => VerbClass::Ichidan,
             Self::Owaru => VerbClass::GodanRu,
             Self::Dasu => VerbClass::GodanSu,
-            Self::Kudasai => return None,
+            // Terminal + i-adj-producing aux don't drive a
+            // Verb::conjugate_axes call; they have no associated
+            // VerbClass. The dispatcher in conjugate_chain branches
+            // on is_terminal() / is_iadj_producing() before consulting.
+            Self::Kudasai | Self::Yasui | Self::Nikui => return None,
         })
     }
 
@@ -411,6 +423,8 @@ impl AuxKind {
             Self::Owaru => "終わる",
             Self::Dasu => "出す",
             Self::Kudasai => "ください",
+            Self::Yasui => "やすい",
+            Self::Nikui => "にくい",
         }
     }
 
@@ -446,6 +460,17 @@ impl AuxKind {
         matches!(self, Self::Kudasai)
     }
 
+    /// Whether this aux's compound is an i-adjective (rather than a
+    /// verb). I-adj-producing aux dispatch their further-inflection
+    /// step through [`IAdjective::conjugate_axes`] instead of
+    /// [`Verb::conjugate_axes`]. Today this is [`Self::Yasui`] and
+    /// [`Self::Nikui`] — both attach to the base verb's renyou stem
+    /// and produce a fully inflectable i-adj
+    /// (`食べやすい` → `食べやすかった`, `食べやすくない`, etc.).
+    pub fn is_iadj_producing(self) -> bool {
+        matches!(self, Self::Yasui | Self::Nikui)
+    }
+
     /// Map a deconjugator process label to an [`AuxKind`], if the
     /// label is the marker for a verb-producing aux. Non-aux labels
     /// (single-axis like "past", "polite") return `None` so the
@@ -472,6 +497,8 @@ impl AuxKind {
             "have someone do" => Self::Temorau,
             "finish/completely/end up" => Self::Teshimau,
             "polite request" => Self::Kudasai,
+            "easy V-ing" => Self::Yasui,
+            "hard V-ing" => Self::Nikui,
             // Renyou-stacking
             "excess V-ing" => Self::Sugiru,
             "start V-ing" => Self::Hajimeru,
@@ -884,6 +911,43 @@ impl Verb {
                 break;
             }
 
+            // I-adj-producing aux branch: the compound (`食べやすい`)
+            // is an i-adjective, not a verb. Dispatch its further
+            // inflection through `IAdjective::conjugate_axes`. The
+            // bridge step's surface is the bare i-adj compound;
+            // subsequent chain steps come from the IAdjective walk
+            // (Polarity → 食べやすくない, Tense → 食べやすかった, …).
+            //
+            // Stacking another aux on top of an i-adj-producing
+            // compound is not supported in this iteration — i-adj
+            // compounds don't have a renyou-stem semantics that
+            // composes cleanly with another aux's lemma in the
+            // current model. The break mirrors the terminal-aux
+            // path; any chain that emits an i-adj-producing aux
+            // mid-stack will be flagged by the strict round-trip
+            // guard in jisho-core.
+            if aux.kind.is_iadj_producing() {
+                let aux_iadj = IAdjective::new(&compound_surface);
+                let aux_result = aux_iadj.conjugate_axes(aux.conjugation)?;
+                let mut chain = working.chain;
+                chain.push(ChainStep {
+                    axis: Axis::Aux(aux.kind),
+                    surface: compound_surface.clone(),
+                    formal: false,
+                });
+                chain.extend(aux_result.chain);
+                let final_surface = chain
+                    .last()
+                    .map(|s| s.surface.clone())
+                    .unwrap_or(compound_surface);
+                working = ChainedConjugation {
+                    surface: final_surface,
+                    conjugation: spec.base,
+                    chain,
+                };
+                break;
+            }
+
             let class = aux.kind.verb_class()?;
             let compound_verb = Verb::new(&compound_surface, class);
             let aux_result = compound_verb.conjugate_axes(aux.conjugation)?;
@@ -914,6 +978,123 @@ impl Verb {
         }
 
         Some(working)
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// IAdjective::conjugate_axes
+// ════════════════════════════════════════════════════════════════════
+
+impl IAdjective {
+    /// Apply a target [`Conjugation`] to this i-adjective, walking the
+    /// (Politeness, Polarity, Tense) axis grid in canonical order and
+    /// producing a [`ChainedConjugation`] with one [`ChainStep`] per
+    /// non-default axis.
+    ///
+    /// Mirrors [`Verb::conjugate_axes`] but skips the Voice stage —
+    /// i-adjectives have no voice. Mood::Indicative composes
+    /// politeness × polarity × tense the usual way; non-Indicative
+    /// moods (Te / ConditionalBa / etc.) are *terminating* — they
+    /// require all other axes at default and emit a single mood step.
+    ///
+    /// Returns `None` for axis combinations that aren't valid for
+    /// i-adjectives (Voice != None, verb-only moods, etc.).
+    ///
+    /// ```text
+    /// 高い + Negative + Past
+    ///   chain = [Polarity → 高くない, Tense → 高くなかった]
+    /// ```
+    ///
+    /// Compose this with [`Verb::conjugate_chain`] when an aux level
+    /// produces an i-adj compound (Yasui, Nikui, …): the verb path
+    /// builds the renyou + aux-lemma surface (e.g. `食べやすい`), then
+    /// dispatches its further axes through `IAdjective::conjugate_axes`
+    /// instead of the usual `Verb::conjugate_axes`.
+    pub fn conjugate_axes(&self, target: Conjugation) -> Option<ChainedConjugation> {
+        // i-adj has no Voice axis; reject any non-None Voice.
+        if target.voice != Voice::None {
+            return None;
+        }
+        target.validate().ok()?;
+
+        // Dictionary-form fast path — no chain steps, just the lemma.
+        if target == Conjugation::dictionary() {
+            return Some(ChainedConjugation::dict_only(self.dict_form.clone(), target));
+        }
+
+        let mut chain = Vec::new();
+
+        let mut current_axes = AxesSoFar {
+            mood: target.mood,
+            ..AxesSoFar::default()
+        };
+        let mut formal_propagating = false;
+
+        let axes_in_order: &[(AxisToggle, Axis, bool)] = &[
+            (
+                AxisToggle::Politeness(target.politeness),
+                Axis::Politeness,
+                target.politeness == Politeness::Polite,
+            ),
+            (
+                AxisToggle::Polarity(target.polarity),
+                Axis::Polarity,
+                false,
+            ),
+            (
+                AxisToggle::Tense(target.tense),
+                Axis::Tense,
+                false,
+            ),
+        ];
+
+        // Special case: a non-Indicative mood with all other axes at
+        // default emits a single mood step (e.g. Te → 高くて, ConditionalBa
+        // → 高ければ).
+        let no_other_axes_active = !axes_in_order.iter().any(|(t, _, _)| t.is_active());
+        if no_other_axes_active && current_axes.mood != Mood::Indicative {
+            let conjform = current_axes.to_conjform_iadj()?;
+            let conjugated = self.conjugate(conjform)?;
+            if conjugated.surface.is_empty() {
+                return None;
+            }
+            chain.push(ChainStep {
+                axis: Axis::Mood(target.mood),
+                surface: conjugated.surface,
+                formal: false,
+            });
+        } else {
+            for (toggle, axis, sets_formal) in axes_in_order {
+                if !toggle.is_active() {
+                    continue;
+                }
+                current_axes.apply(*toggle);
+                let conjform = current_axes.to_conjform_iadj()?;
+                let conjugated = self.conjugate(conjform)?;
+                if conjugated.surface.is_empty() {
+                    return None;
+                }
+                if *sets_formal {
+                    formal_propagating = true;
+                }
+                chain.push(ChainStep {
+                    axis: *axis,
+                    surface: conjugated.surface,
+                    formal: formal_propagating,
+                });
+            }
+        }
+
+        if chain.is_empty() {
+            return Some(ChainedConjugation::dict_only(self.dict_form.clone(), target));
+        }
+
+        let final_surface = chain.last().unwrap().surface.clone();
+        Some(ChainedConjugation {
+            surface: final_surface,
+            conjugation: target,
+            chain,
+        })
     }
 }
 
@@ -1208,6 +1389,46 @@ impl AxesSoFar {
             Some(form)
         } else {
             None
+        }
+    }
+
+    /// Map cumulative axes to the **i-adjective** ConjForm variant.
+    ///
+    /// I-adj has a smaller valid axis surface than verbs:
+    /// - No Voice (handled at the verb-axes call site, never reaches here).
+    /// - No Volitional / Imperative / VolitionalNegative — those moods
+    ///   are verb-only.
+    /// - No Desiderative / DesiderativeOther — those produce *new*
+    ///   i-adj compounds (たい / たがる); applying them to an i-adj is
+    ///   nonsense.
+    /// - Mood::ConditionalBa with negative requires NegativeBa-style
+    ///   combo: i-adj negative + ければ → くなければ. The legacy
+    ///   ConjForm grid doesn't have a separate NegativeBa for i-adj
+    ///   so we drop the combo (caller can synthesize via two steps if
+    ///   needed; rare in real text).
+    fn to_conjform_iadj(self) -> Option<ConjForm> {
+        match self.mood {
+            Mood::Indicative => Some(match (self.politeness, self.polarity, self.tense) {
+                (Politeness::Plain,  Polarity::Affirmative, Tense::Nonpast) => ConjForm::Dictionary,
+                (Politeness::Plain,  Polarity::Affirmative, Tense::Past)    => ConjForm::Past,
+                (Politeness::Plain,  Polarity::Negative,    Tense::Nonpast) => ConjForm::Negative,
+                (Politeness::Plain,  Polarity::Negative,    Tense::Past)    => ConjForm::NegativePast,
+                (Politeness::Polite, Polarity::Affirmative, Tense::Nonpast) => ConjForm::Polite,
+                (Politeness::Polite, Polarity::Affirmative, Tense::Past)    => ConjForm::PolitePast,
+                (Politeness::Polite, Polarity::Negative,    Tense::Nonpast) => ConjForm::PoliteNegative,
+                (Politeness::Polite, Polarity::Negative,    Tense::Past)    => ConjForm::PoliteNegativePast,
+            }),
+            Mood::Te => self.expect_terminating(ConjForm::Te),
+            Mood::ConditionalBa => self.expect_terminating(ConjForm::ConditionalBa),
+            Mood::ConditionalTara => self.expect_terminating(ConjForm::ConditionalTara),
+            Mood::ProvisionalNara => self.expect_terminating(ConjForm::ProvisionalNara),
+            // Verb-only moods — invalid for i-adjectives.
+            Mood::Imperative
+            | Mood::ImperativeNegative
+            | Mood::Volitional
+            | Mood::VolitionalNegative
+            | Mood::Desiderative
+            | Mood::DesiderativeOther => None,
         }
     }
 }
@@ -1824,6 +2045,139 @@ mod tests {
     #[test]
     fn chain_round_trip_hashiru_dashita() {
         assert_aux_round_trip("走り出した", "走る", VerbClass::GodanRu);
+    }
+
+    #[test]
+    fn iadj_conjugate_axes_dictionary_form() {
+        let a = IAdjective::new("高い");
+        let r = a.conjugate_axes(Conjugation::dictionary()).unwrap();
+        assert_eq!(r.surface, "高い");
+        assert!(r.chain.is_empty());
+    }
+
+    #[test]
+    fn iadj_conjugate_axes_negative_alone() {
+        let a = IAdjective::new("高い");
+        let r = a
+            .conjugate_axes(Conjugation::dictionary().with_negative())
+            .unwrap();
+        assert_eq!(r.surface, "高くない");
+        assert_eq!(r.chain.len(), 1);
+        assert_eq!(r.chain[0].axis, Axis::Polarity);
+    }
+
+    #[test]
+    fn iadj_conjugate_axes_negative_past_two_steps() {
+        let a = IAdjective::new("高い");
+        let r = a
+            .conjugate_axes(Conjugation::dictionary().with_negative().with_past())
+            .unwrap();
+        assert_eq!(r.surface, "高くなかった");
+        assert_eq!(r.chain.len(), 2);
+        assert_eq!(r.chain[0].axis, Axis::Polarity);
+        assert_eq!(r.chain[0].surface, "高くない");
+        assert_eq!(r.chain[1].axis, Axis::Tense);
+        assert_eq!(r.chain[1].surface, "高くなかった");
+    }
+
+    #[test]
+    fn iadj_conjugate_axes_polite_negative_past() {
+        let a = IAdjective::new("高い");
+        let r = a
+            .conjugate_axes(
+                Conjugation::dictionary()
+                    .with_polite()
+                    .with_negative()
+                    .with_past(),
+            )
+            .unwrap();
+        assert_eq!(r.surface, "高くなかったです");
+        assert_eq!(r.chain.len(), 3);
+        assert_eq!(r.chain[0].axis, Axis::Politeness);
+        assert!(r.chain[0].formal);
+        assert_eq!(r.chain[1].axis, Axis::Polarity);
+        assert!(r.chain[1].formal, "formal propagates after Politeness");
+        assert_eq!(r.chain[2].axis, Axis::Tense);
+        assert!(r.chain[2].formal);
+    }
+
+    #[test]
+    fn iadj_conjugate_axes_te_terminating() {
+        let a = IAdjective::new("高い");
+        let mut c = Conjugation::dictionary();
+        c.mood = Mood::Te;
+        let r = a.conjugate_axes(c).unwrap();
+        assert_eq!(r.surface, "高くて");
+        assert_eq!(r.chain.len(), 1);
+        assert_eq!(r.chain[0].axis, Axis::Mood(Mood::Te));
+    }
+
+    #[test]
+    fn iadj_conjugate_axes_rejects_voice() {
+        // I-adj have no voice; non-None Voice → None.
+        let a = IAdjective::new("高い");
+        let mut c = Conjugation::dictionary();
+        c.voice = Voice::Causative;
+        assert!(a.conjugate_axes(c).is_none());
+    }
+
+    #[test]
+    fn chain_round_trip_taberu_yasui_dict() {
+        // 食べやすい — base v1 + Yasui aux on renyou stem (食べ).
+        // Forward: dict(食べる) → renyou → 食べ + やすい → 食べやすい.
+        use crate::deconjugate_to_lemma;
+        let chains = deconjugate_to_lemma("食べやすい", "食べる");
+        let form = chains
+            .iter()
+            .find(|f| f.process.iter().any(|p| p == "easy V-ing"))
+            .expect("chain with 'easy V-ing' label");
+        let spec = ChainSpec::from_process(&form.process)
+            .expect("easy V-ing should now decompose strict");
+        assert_eq!(spec.aux.len(), 1);
+        assert_eq!(spec.aux[0].kind, AuxKind::Yasui);
+        let v = Verb::new("食べる", VerbClass::Ichidan);
+        let forward = v.conjugate_chain(&spec).expect("forward chain");
+        assert_eq!(forward.surface, "食べやすい");
+        let last = forward.chain.last().unwrap();
+        assert_eq!(last.axis, Axis::Aux(AuxKind::Yasui));
+        assert_eq!(last.surface, "食べやすい");
+    }
+
+    #[test]
+    fn chain_round_trip_taberu_yasukatta_via_iadj_axes() {
+        // 食べやすかった — Yasui aux + Past axis applied to the i-adj
+        // compound through IAdjective::conjugate_axes.
+        let v = Verb::new("食べる", VerbClass::Ichidan);
+        let spec = ChainSpec {
+            base: Conjugation::dictionary(),
+            aux: vec![AuxStep {
+                kind: AuxKind::Yasui,
+                conjugation: Conjugation::dictionary().with_past(),
+            }],
+        };
+        let forward = v.conjugate_chain(&spec).expect("forward chain");
+        assert_eq!(forward.surface, "食べやすかった");
+        // chain: [Aux(Yasui) bridge, Tense via IAdjective]
+        assert_eq!(forward.chain.len(), 2);
+        assert_eq!(forward.chain[0].axis, Axis::Aux(AuxKind::Yasui));
+        assert_eq!(forward.chain[0].surface, "食べやすい");
+        assert_eq!(forward.chain[1].axis, Axis::Tense);
+        assert_eq!(forward.chain[1].surface, "食べやすかった");
+    }
+
+    #[test]
+    fn chain_round_trip_yomu_nikukunai() {
+        // 読みにくくない — Nikui aux + Negative axis through i-adj.
+        let v = Verb::new("読む", VerbClass::GodanMu);
+        let spec = ChainSpec {
+            base: Conjugation::dictionary(),
+            aux: vec![AuxStep {
+                kind: AuxKind::Nikui,
+                conjugation: Conjugation::dictionary().with_negative(),
+            }],
+        };
+        let forward = v.conjugate_chain(&spec).expect("forward chain");
+        assert_eq!(forward.surface, "読みにくくない");
     }
 
     #[test]
